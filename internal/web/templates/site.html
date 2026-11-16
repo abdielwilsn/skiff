@@ -1,0 +1,92 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$s := $d.Site}}
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/">Sites</a> /</p>
+    <h1>{{$s.Domain}} <span class="badge badge-{{$s.Status}}">{{$s.Status}}</span></h1>
+  </div>
+  <div class="actions">
+    <a class="btn" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">Open site ↗</a>
+    <form method="post" action="/sites/{{$s.ID}}/deploy">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>Deploy now</button>
+    </form>
+  </div>
+</div>
+
+<section class="card">
+  <dl class="facts">
+    <div><dt>Repository</dt><dd><a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a></dd></div>
+    <div><dt>Branch</dt><dd><code>{{$s.Branch}}</code></dd></div>
+    <div><dt>PHP</dt><dd>{{$s.PHPVersion}}</dd></div>
+    <div><dt>HTTPS</dt><dd>{{if $s.HTTPS}}<span class="badge badge-active">on</span> <a href="#https">certificate</a>{{else}}<a href="#https">off</a>{{end}}</dd></div>
+    <div><dt>Database</dt><dd>{{with $d.Database}}<a href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}} <span class="badge badge-queued">{{.Status}}</span>{{end}}{{else}}<span class="muted">none (SQLite or .env)</span>{{end}}</dd></div>
+    <div><dt>Last deploy</dt><dd>{{ago $s.DeployedAt}}</dd></div>
+    <div><dt>Path</dt><dd><code>{{$d.Path}}</code></dd></div>
+    <div><dt>Nginx config</dt><dd><code>{{$d.NginxPath}}</code></dd></div>
+  </dl>
+  <p><a href="/sites/{{$s.ID}}/env">Edit environment (.env) →</a></p>
+</section>
+
+<h2 class="section-title" id="https">HTTPS</h2>
+<section class="card stack">
+{{if $s.HTTPS}}
+  <p><span class="badge badge-active">secured</span> Served over HTTPS with a Let's Encrypt certificate. HTTP requests redirect to HTTPS.</p>
+  {{with $d.CertExpires}}
+  <p class="muted">Certificate valid until {{.Format "Jan 2, 2006"}} ({{$d.CertDaysLeft}} days). Certbot renews it automatically about 30 days before expiry.</p>
+  {{end}}
+  <form method="post" action="/sites/{{$s.ID}}/https/disable"
+        data-confirm="Remove HTTPS from {{$s.Domain}}? This deletes the certificate and resets the site's Nginx config to Skiff's plain-HTTP template (custom Nginx edits are lost).">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn" {{if $d.Busy}}disabled{{end}}>Remove HTTPS</button>
+  </form>
+{{else if not $d.HTTPSEligible}}
+  <p class="muted">{{$d.HTTPSReason}}</p>
+{{else if not $s.DeployedAt}}
+  <p class="muted">Deploy the site once, then you can add a free Let's Encrypt certificate here.</p>
+{{else}}
+  <p>Get a free Let's Encrypt certificate for <code>{{$s.Domain}}</code>. Before you start, make sure:</p>
+  <ul class="checklist">
+    <li>the domain's DNS <strong>A record</strong> points at this server, and</li>
+    <li>port <strong>80</strong> is open (Let's Encrypt connects to it to verify the domain).</li>
+  </ul>
+  {{if $d.ACMEStaging}}<p class="hint">This panel is configured with a custom ACME server, so browsers won't trust the certificates it issues.</p>{{end}}
+  <form method="post" action="/sites/{{$s.ID}}/https" class="stack">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <label>Email for Let's Encrypt <span class="hint">(optional; for important account notices)</span>
+      <input type="email" name="email" value="{{$d.ACMEEmail}}" autocomplete="email" placeholder="you@example.com">
+    </label>
+    <p class="hint">By enabling HTTPS you agree to the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt Subscriber Agreement</a>.</p>
+    <div class="form-actions">
+      <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>Enable HTTPS</button>
+    </div>
+  </form>
+{{end}}
+</section>
+
+<h2 class="section-title">Deployments</h2>
+{{template "jobs" $d.Jobs}}
+
+<h2 class="section-title" id="script">Deploy script</h2>
+<form method="post" action="/sites/{{$s.ID}}/script" class="card stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <p class="hint">Before this runs, Skiff checks out the latest commit of <code>{{$s.Branch}}</code>. Afterwards it reloads Nginx and PHP-FPM.</p>
+  <textarea name="script" class="code" rows="16" spellcheck="false">{{$s.DeployScript}}</textarea>
+  <div class="form-actions">
+    <button class="btn primary">Save script</button>
+    <button class="btn" name="reset" value="1" data-confirm="Replace this script with Skiff's default?">Reset to default</button>
+  </div>
+</form>
+
+<h2 class="section-title" id="danger">Danger zone</h2>
+<form method="post" action="/sites/{{$s.ID}}/delete" class="card stack danger"
+      data-confirm="Delete {{$s.Domain}}? This removes its files and Nginx config from the server.">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <p>Deleting removes <code>{{$d.Path}}</code> (including <code>.env</code> and any SQLite database inside it) and the site's Nginx config. Your GitHub repository is untouched.</p>
+  <label>Type <code>{{$s.Domain}}</code> to confirm
+    <input name="confirm" required autocomplete="off" spellcheck="false">
+  </label>
+  <div class="form-actions"><button class="btn danger">Delete site</button></div>
+</form>
+{{end}}

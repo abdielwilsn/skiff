@@ -1,0 +1,42 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1>Repositories</h1>
+  {{if $d.Connected}}<a class="btn" href="/repos?refresh=1">Refresh</a>{{end}}
+</div>
+
+{{with $d.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+
+{{if not $d.Connected}}
+<section class="card empty">
+  <h2>GitHub isn't connected</h2>
+  <p class="muted">Connect a GitHub account to browse and deploy your repositories.</p>
+  <a class="btn primary" href="/settings">Connect GitHub</a>
+</section>
+{{else}}
+<p class="muted">Signed in as <strong>@{{$d.Login}}</strong> · {{len $d.Repos}} repositories</p>
+<input id="repo-filter" class="filter" type="search" placeholder="Filter repositories…" autocomplete="off">
+<ul class="repo-list">
+  {{range $d.Repos}}
+  <li class="repo" data-repo="{{.FullName}}">
+    <div class="repo-main">
+      <div class="repo-name">
+        <a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer">{{.FullName}}</a>
+        {{if .Private}}<span class="badge">private</span>{{end}}
+        {{if .Archived}}<span class="badge">archived</span>{{end}}
+      </div>
+      {{with .Description}}<p class="muted repo-desc">{{.}}</p>{{end}}
+      <p class="repo-meta muted">{{with .Language}}{{.}} · {{end}}<code>{{.DefaultBranch}}</code> · pushed {{ago .PushedAt}}</p>
+    </div>
+    <div class="repo-action">
+      {{with index $d.SiteByRepo .FullName}}
+        <a class="btn" href="/sites/{{.}}">View site</a>
+      {{else}}
+        <a class="btn primary" href="/sites/new?repo={{.FullName}}&amp;branch={{.DefaultBranch}}">Deploy</a>
+      {{end}}
+    </div>
+  </li>
+  {{end}}
+</ul>
+{{end}}
+{{end}}
