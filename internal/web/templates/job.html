@@ -1,0 +1,16 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$site := $d.Site}}{{if eq $d.Job.Kind "delete"}}{{$site = false}}{{end}}
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/">Sites</a> /{{with $site}} <a href="/sites/{{.ID}}">{{.Domain}}</a> /{{end}}</p>
+    <h1>{{$d.Job.Title}} <span id="job-status" class="badge badge-{{$d.Job.Status}}">{{$d.Job.Status}}</span></h1>
+    <p class="muted">Job #{{$d.Job.ID}} · queued {{ago $d.Job.CreatedAt}} <span id="job-duration">{{with $d.Job.Duration}}· {{.}}{{end}}</span></p>
+  </div>
+  <div class="actions">
+    {{with $site}}<a class="btn" href="/sites/{{.ID}}">Back to site</a>{{else}}<a class="btn" href="/">Back to sites</a>{{end}}
+  </div>
+</div>
+<div id="job-next" class="flash flash-ok" hidden>Done. <a class="btn primary" id="job-next-link" href="/">Continue</a></div>
+<pre id="job-log" class="log" data-job="{{$d.Job.ID}}" tabindex="0" aria-live="polite"></pre>
+{{end}}

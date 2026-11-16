@@ -1,0 +1,58 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · Skiff</title>
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/static/app.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+{{if .User}}
+<header class="topbar">
+  <div class="topbar-inner">
+    <a class="brand" href="/"><img src="/static/icon.svg" alt="" width="22" height="22"> Skiff</a>
+    <nav class="nav">
+      <a href="/" class="{{if eq .Nav "sites"}}active{{end}}">Sites</a>
+      <a href="/repos" class="{{if eq .Nav "repos"}}active{{end}}">Repositories</a>
+      <a href="/databases" class="{{if eq .Nav "databases"}}active{{end}}">Databases</a>
+      <a href="/settings" class="{{if eq .Nav "settings"}}active{{end}}">Settings</a>
+    </nav>
+    <form method="post" action="/logout" class="logout">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="linklike" title="Log out">{{.User}} · Log out</button>
+    </form>
+  </div>
+</header>
+{{end}}
+{{if .DryRun}}<div class="banner">Dry-run mode: server commands are printed in job logs, not executed.</div>{{end}}
+<main class="{{if not .User}}narrow{{end}}">
+  {{with .Flash}}{{if .Msg}}<div class="flash flash-{{.Kind}}" role="status">{{.Msg}}</div>{{end}}{{end}}
+  {{template "content" .}}
+</main>
+<footer class="footer">Skiff {{.Version}}</footer>
+</body>
+</html>{{end}}
+
+{{define "jobs"}}
+{{if .}}
+<div class="table-wrap">
+<table class="table">
+  <thead><tr><th>Job</th><th>Status</th><th>Started</th><th>Took</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td><a href="/jobs/{{.ID}}">{{.Title}}</a></td>
+      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+      <td class="muted">{{ago .CreatedAt}}</td>
+      <td class="muted">{{.Duration}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p class="muted">Nothing has run yet.</p>
+{{end}}
+{{end}}

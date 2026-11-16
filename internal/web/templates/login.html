@@ -1,0 +1,17 @@
+{{define "content"}}
+<div class="card auth">
+  <div class="auth-brand"><img src="/static/icon.svg" alt="" width="36" height="36"></div>
+  <h1>Log in to Skiff</h1>
+  {{with .Data.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+  <form method="post" action="/login" class="stack">
+    <label>Username
+      <input name="username" value="{{.Data.Username}}" required autocomplete="username" autofocus>
+    </label>
+    <label>Password
+      <input type="password" name="password" required autocomplete="current-password">
+    </label>
+    <button class="btn primary">Log in</button>
+  </form>
+  <p class="hint">Forgot it? Run <code>sudo skiff reset-admin</code> on the server, then open <code>/setup</code>.</p>
+</div>
+{{end}}

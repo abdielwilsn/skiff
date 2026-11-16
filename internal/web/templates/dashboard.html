@@ -1,0 +1,61 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <h1>Sites</h1>
+  <a class="btn primary" href="/sites/new">New site</a>
+</div>
+
+{{if not $d.Provisioned}}
+<section class="card callout">
+  <h2>Prepare this server</h2>
+  <p>Before deploying Laravel apps, Skiff installs Nginx, PHP {{$d.PHPVersion}} (FPM), Composer and Git, creates the unprivileged <code>skiff</code> user that sites run as, and adds swap on small servers. It takes a few minutes and is safe to re-run.</p>
+  {{with $d.ProvisionJob}}
+    {{if not .Done}}
+      <p><span class="badge badge-running">running</span> Provisioning is in progress. <a href="/jobs/{{.ID}}">Watch the log</a></p>
+    {{else if eq .Status "failed"}}
+      <p><span class="badge badge-failed">failed</span> The last attempt failed. <a href="/jobs/{{.ID}}">See what happened</a></p>
+    {{end}}
+  {{end}}
+  {{if or (not $d.ProvisionJob) $d.ProvisionJob.Done}}
+  <form method="post" action="/server/provision">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn primary">Provision server</button>
+  </form>
+  {{end}}
+</section>
+{{end}}
+
+{{if not $d.GitHubLogin}}
+<section class="card callout subtle">
+  <p><strong>Connect GitHub</strong> to pick from your repositories, including private ones. <a href="/settings">Set it up in Settings</a>. Public repositories work without it.</p>
+</section>
+{{end}}
+
+{{if $d.Sites}}
+<div class="table-wrap">
+<table class="table">
+  <thead><tr><th>Domain</th><th>Repository</th><th>Branch</th><th>Status</th><th>Last deploy</th></tr></thead>
+  <tbody>
+  {{range $d.Sites}}
+    <tr>
+      <td><a href="/sites/{{.ID}}"><strong>{{.Domain}}</strong></a>{{if .HTTPS}} <span class="badge badge-active" title="HTTPS enabled">https</span>{{end}}</td>
+      <td>{{.Repo}}</td>
+      <td><code>{{.Branch}}</code></td>
+      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
+      <td class="muted">{{ago .DeployedAt}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<section class="card empty">
+  <h2>No sites yet</h2>
+  <p class="muted">Pick a Laravel repository and a domain. Skiff clones it, installs dependencies, and serves it with Nginx.</p>
+  <a class="btn primary" href="/sites/new">Deploy your first app</a>
+</section>
+{{end}}
+
+<h2 class="section-title">Recent activity</h2>
+{{template "jobs" $d.Jobs}}
+{{end}}

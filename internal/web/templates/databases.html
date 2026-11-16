@@ -1,0 +1,93 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$csrf := .CSRF}}
+<div class="page-head"><h1>Databases</h1></div>
+
+{{if not $d.Installed}}
+<section class="card callout">
+  <h2>Install MySQL</h2>
+  <p>Skiff installs MySQL 8 only when you need it. It listens on localhost only, and on servers with less than 2 GB of RAM it's tuned to use roughly 150–200 MB instead of the default 400+ MB.</p>
+  {{with $d.InstallJob}}
+    {{if not .Done}}<p><span class="badge badge-running">running</span> Installing… <a href="/jobs/{{.ID}}">watch the log</a></p>
+    {{else if eq .Status "failed"}}<p><span class="badge badge-failed">failed</span> The last attempt failed. <a href="/jobs/{{.ID}}">See why</a></p>{{end}}
+  {{end}}
+  {{if or (not $d.InstallJob) $d.InstallJob.Done}}
+  <form method="post" action="/databases/install">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <button class="btn primary">Install MySQL</button>
+  </form>
+  {{end}}
+</section>
+{{else}}
+
+{{if $d.Databases}}
+<div class="table-wrap">
+<table class="table">
+  <thead><tr><th>Database</th><th>User / password</th><th>Site</th><th>Status</th><th></th></tr></thead>
+  <tbody>
+  {{range $d.Databases}}
+  <tr>
+    <td><strong>{{.Name}}</strong><div class="muted small">created {{ago .CreatedAt}}</div></td>
+    <td>
+      <code>{{.Username}}</code>
+      <details class="secret"><summary>Show password</summary><code>{{.Password}}</code></details>
+    </td>
+    <td>
+      {{if .SiteID}}
+        <a href="/sites/{{.SiteID}}">{{.SiteDomain}}</a>
+        <form method="post" action="/databases/{{.ID}}/detach" class="inline" data-confirm="Detach {{.Name}} from {{.SiteDomain}}? Its .env is not changed.">
+          <input type="hidden" name="csrf" value="{{$csrf}}"><button class="linklike small">detach</button>
+        </form>
+      {{else if and (eq .Status "ready") $d.AttachTo}}
+        <form method="post" action="/databases/{{.ID}}/attach" class="inline-form">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <select name="site_id" required aria-label="Site to use {{.Name}}">
+            <option value="">Use for site…</option>
+            {{range $d.AttachTo}}<option value="{{.ID}}">{{.Domain}}</option>{{end}}
+          </select>
+          <button class="btn small">Attach</button>
+        </form>
+      {{else}}<span class="muted">-</span>{{end}}
+    </td>
+    <td>
+      <span class="badge badge-{{if eq .Status "ready"}}active{{else if eq .Status "pending"}}queued{{else}}{{.Status}}{{end}}">{{.Status}}</span>
+      {{if eq .Status "failed"}}
+      <form method="post" action="/databases/{{.ID}}/retry" class="inline">
+        <input type="hidden" name="csrf" value="{{$csrf}}"><button class="linklike small">retry</button>
+      </form>
+      {{end}}
+    </td>
+    <td>
+      <details class="danger-details">
+        <summary class="linklike small">delete</summary>
+        <form method="post" action="/databases/{{.ID}}/delete" class="stack small-form" data-confirm="Permanently delete database {{.Name}} and all its data? This cannot be undone.">
+          <input type="hidden" name="csrf" value="{{$csrf}}">
+          <input name="confirm" placeholder="type {{.Name}}" required autocomplete="off" spellcheck="false" aria-label="Type {{.Name}} to confirm">
+          <button class="btn danger small">Delete forever</button>
+        </form>
+      </details>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+<p class="hint">Apps connect to <code>127.0.0.1:3306</code>. To browse a database from your computer (TablePlus, DBeaver…), use an SSH tunnel to the server; MySQL is not reachable from the internet.</p>
+{{else}}
+<section class="card empty">
+  <h2>No databases yet</h2>
+  <p class="muted">Tick "Create a MySQL database" when adding a site, or create one below.</p>
+</section>
+{{end}}
+
+<h2 class="section-title">New database</h2>
+<form method="post" action="/databases" class="card stack form-card">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <label>Name
+    <input name="name" required pattern="[a-z][a-z0-9_]{0,31}" placeholder="shop" spellcheck="false" autocomplete="off">
+    <span class="hint">Lowercase letters, digits and underscores. A user with the same name and a random password is created with full access to it.</span>
+  </label>
+  <div class="form-actions"><button class="btn primary">Create database</button></div>
+</form>
+{{end}}
+{{end}}

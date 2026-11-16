@@ -1,0 +1,19 @@
+{{define "content"}}
+{{$d := .Data}}
+<div class="page-head">
+  <div>
+    <p class="crumb"><a href="/">Sites</a> / <a href="/sites/{{$d.Site.ID}}">{{$d.Site.Domain}}</a> /</p>
+    <h1>Environment</h1>
+  </div>
+</div>
+{{with $d.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+<form method="post" action="/sites/{{$d.Site.ID}}/env" class="card stack">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <p class="hint">This is the site's <code>.env</code> file. If the app caches its config, Skiff re-runs <code>php artisan config:cache</code> after saving.</p>
+  <textarea name="env" class="code" rows="24" spellcheck="false">{{$d.Env}}</textarea>
+  <div class="form-actions">
+    <button class="btn primary">Save .env</button>
+    <a class="btn" href="/sites/{{$d.Site.ID}}">Back</a>
+  </div>
+</form>
+{{end}}
