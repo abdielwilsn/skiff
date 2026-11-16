@@ -63,13 +63,24 @@ func (d *Deployer) certbotFlags(domain, email string) string {
 	return strings.Join(args, " ")
 }
 
-const installCertbot = `if ! dpkg -s certbot python3-certbot-nginx >/dev/null 2>&1; then
+const installCertbot = pkgsInstalledFn + `
+if ! pkgs_installed certbot python3-certbot-nginx; then
     echo "Installing certbot (first time only)"
     export DEBIAN_FRONTEND=noninteractive
+    dpkg --configure -a || true   # finish any interrupted install first
     apt-get update -q
     apt-get install -y -q certbot python3-certbot-nginx
 fi
 certbot --version`
+
+// pkgsInstalledFn defines a bash function that succeeds only when every named
+// package is fully installed. ("dpkg -s" also succeeds for half-configured
+// packages, which would make a failed install look done and never be retried.)
+const pkgsInstalledFn = `pkgs_installed() {
+    for p in "$@"; do
+        dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || return 1
+    done
+}`
 
 // EnableHTTPS obtains a certificate for the site and switches it to HTTPS.
 func (d *Deployer) EnableHTTPS(ctx context.Context, w io.Writer, site store.Site, email string) error {
