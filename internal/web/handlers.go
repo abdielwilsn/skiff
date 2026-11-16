@@ -150,6 +150,9 @@ type newSiteData struct {
 	CreateDB                    bool
 	PHP                         string
 	PHPVersions                 []string
+	Node                        string
+	NodeVersions                []string
+	NodeSet                     bool // the form was submitted, so Node "" means "none"
 }
 
 func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
@@ -159,6 +162,10 @@ func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 	d.PHPVersions = laravel.PHPVersions
 	if d.PHP == "" {
 		d.PHP = laravel.DefaultPHP
+	}
+	d.NodeVersions = laravel.NodeVersions
+	if !d.NodeSet {
+		d.Node = laravel.DefaultNode
 	}
 	if d.Connected {
 		d.Repos, _ = s.repos(r.Context(), false)
@@ -184,6 +191,8 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		Domain:   strings.ToLower(strings.TrimSpace(r.FormValue("domain"))),
 		CreateDB: r.FormValue("mysql") == "1",
 		PHP:      r.FormValue("php"),
+		Node:     r.FormValue("node"),
+		NodeSet:  true,
 	}
 	if d.Branch == "" {
 		d.Branch = "main"
@@ -197,13 +206,15 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		d.Error = "Enter a domain like app.example.com, or this server's IP address."
 	case !laravel.ValidPHP(d.PHP):
 		d.Error = "Choose a PHP version."
+	case !laravel.ValidNode(d.Node):
+		d.Error = "Choose a Node.js version."
 	case d.Domain == s.panelHTTPSDomain():
 		d.Error = d.Domain + " is where this panel is served. Use a different domain for the site."
 	}
 	if d.Error == "" {
 		site := store.Site{
 			Domain: d.Domain, Repo: d.Repo, Branch: d.Branch,
-			PHPVersion: d.PHP, DeployScript: laravel.DefaultDeployScript,
+			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: laravel.DefaultDeployScript,
 		}
 		id, err := s.st.CreateSite(site)
 		switch {
@@ -314,8 +325,9 @@ type siteData struct {
 	Path      string
 	NginxPath string
 
-	Database    *store.Database
-	PHPVersions []string
+	Database     *store.Database
+	PHPVersions  []string
+	NodeVersions []string
 
 	HTTPSEligible bool
 	HTTPSReason   string // why HTTPS isn't possible, when not eligible
@@ -337,6 +349,7 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 		d.Database = &db
 	}
 	d.PHPVersions = laravel.PHPVersions
+	d.NodeVersions = laravel.NodeVersions
 	d.HTTPSEligible, d.HTTPSReason = laravel.HTTPSEligible(site.Domain)
 	d.ACMEEmail, _ = s.st.Setting(keyACMEEmail)
 	d.ACMEStaging = s.cfg.ACMEServer != ""
@@ -473,6 +486,32 @@ func (s *Server) setPHP(w http.ResponseWriter, r *http.Request, _ store.Session)
 	}
 	if php != site.PHPVersion {
 		setFlash(w, "ok", "PHP "+php+" selected. Click Deploy now to switch the site over.")
+	}
+	redirect(w, r, s.siteURL(site))
+}
+
+// setNode changes the Node.js version used to build the site's assets ("" = none).
+func (s *Server) setNode(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	node := r.FormValue("node")
+	if !laravel.ValidNode(node) {
+		setFlash(w, "err", "Choose a Node.js version.")
+		redirect(w, r, s.siteURL(site))
+		return
+	}
+	if err := s.st.SetSiteNode(site.ID, node); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if node != site.NodeVersion {
+		if node == "" {
+			setFlash(w, "ok", "Node.js turned off for this site. Remove npm commands from the deploy script if it has any.")
+		} else {
+			setFlash(w, "ok", "Node.js "+node+" selected. It's installed on the next deploy.")
+		}
 	}
 	redirect(w, r, s.siteURL(site))
 }

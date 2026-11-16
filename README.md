@@ -66,6 +66,28 @@ installs the version if needed, runs the deploy script with that `php` (and
 `composer`) first on `PATH`, and repoints the site's Nginx config at the
 matching PHP-FPM socket, keeping any other edits (including certbot's).
 
+## Node.js and frontend builds
+
+Each site also picks a Node.js LTS version (22, 24 or 26; default 24, or
+None). If the repository has a `package.json`, the first deploy installs that
+version from the official nodejs.org builds (checksum-verified, into
+`/opt/skiff/node/<major>`; no apt repositories or install scripts), and puts
+`node`/`npm` first on the deploy script's `PATH`.
+
+The default deploy script builds assets after `composer install`:
+
+```bash
+if [ -f package.json ]; then
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    npm run build
+fi
+```
+
+so Vite's `public/build/manifest.json` exists before the site goes live. Sites
+whose deploy script is still an untouched older default are upgraded to the new
+one automatically when Skiff starts; edited scripts are left alone (add the
+block above yourself).
+
 ## MySQL databases
 
 MySQL isn't part of provisioning. **Databases → Install MySQL** adds it only

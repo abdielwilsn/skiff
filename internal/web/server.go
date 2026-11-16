@@ -133,6 +133,12 @@ func New(cfg Config) (*Server, error) {
 		return nil, err
 	}
 	s.needsSetup() // prints the setup token on first start
+	// Sites still on an untouched older default deploy script get the current one.
+	if n, err := s.st.UpgradeDeployScripts(laravel.PreviousDefaultDeployScripts, laravel.DefaultDeployScript); err != nil {
+		slog.Error("upgrade deploy scripts", "err", err)
+	} else if n > 0 {
+		slog.Info("upgraded sites to the new default deploy script", "sites", n)
+	}
 	s.routes()
 	return s, nil
 }
@@ -158,6 +164,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sites/{id}/deploy", s.auth(s.deploySite))
 	m.HandleFunc("POST /sites/{id}/script", s.auth(s.saveScript))
 	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
+	m.HandleFunc("POST /sites/{id}/node", s.auth(s.setNode))
 	m.HandleFunc("GET /sites/{id}/env", s.auth(s.envPage))
 	m.HandleFunc("POST /sites/{id}/env", s.auth(s.saveEnv))
 	m.HandleFunc("POST /sites/{id}/delete", s.auth(s.deleteSite))
