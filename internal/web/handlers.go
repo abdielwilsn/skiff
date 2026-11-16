@@ -40,7 +40,7 @@ type dashboardData struct {
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, sess store.Session) {
-	d := dashboardData{Provisioned: s.provisioned(), PHPVersion: laravel.PHPVersion}
+	d := dashboardData{Provisioned: s.provisioned(), PHPVersion: laravel.DefaultPHP}
 	if j, err := s.st.LatestJob("provision"); err == nil {
 		d.ProvisionJob = &j
 	}
@@ -62,7 +62,7 @@ func (s *Server) provision(w http.ResponseWriter, r *http.Request, _ store.Sessi
 		redirect(w, r, "/jobs/"+strconv.FormatInt(j.ID, 10))
 		return
 	}
-	id, err := s.runner.Enqueue(nil, "provision", "Provision server (Nginx, PHP "+laravel.PHPVersion+", Composer)",
+	id, err := s.runner.Enqueue(nil, "provision", "Provision server (Nginx, PHP "+laravel.DefaultPHP+", Composer)",
 		s.deployer.Provision,
 		func(err error) {
 			if err == nil {
@@ -148,12 +148,18 @@ type newSiteData struct {
 	Host                        string
 	MySQL                       bool // MySQL is installed, so offer a database
 	CreateDB                    bool
+	PHP                         string
+	PHPVersions                 []string
 }
 
 func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 	d.Connected = s.githubToken() != ""
 	d.Provisioned = s.provisioned()
 	d.MySQL = s.mysqlInstalled()
+	d.PHPVersions = laravel.PHPVersions
+	if d.PHP == "" {
+		d.PHP = laravel.DefaultPHP
+	}
 	if d.Connected {
 		d.Repos, _ = s.repos(r.Context(), false)
 	}
@@ -177,6 +183,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		Branch:   strings.TrimSpace(r.FormValue("branch")),
 		Domain:   strings.ToLower(strings.TrimSpace(r.FormValue("domain"))),
 		CreateDB: r.FormValue("mysql") == "1",
+		PHP:      r.FormValue("php"),
 	}
 	if d.Branch == "" {
 		d.Branch = "main"
@@ -188,13 +195,15 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		d.Error = "That branch name is not valid."
 	case !validDomain(d.Domain):
 		d.Error = "Enter a domain like app.example.com, or this server's IP address."
+	case !laravel.ValidPHP(d.PHP):
+		d.Error = "Choose a PHP version."
 	case d.Domain == s.panelHTTPSDomain():
 		d.Error = d.Domain + " is where this panel is served. Use a different domain for the site."
 	}
 	if d.Error == "" {
 		site := store.Site{
 			Domain: d.Domain, Repo: d.Repo, Branch: d.Branch,
-			PHPVersion: laravel.PHPVersion, DeployScript: laravel.DefaultDeployScript,
+			PHPVersion: d.PHP, DeployScript: laravel.DefaultDeployScript,
 		}
 		id, err := s.st.CreateSite(site)
 		switch {
@@ -305,7 +314,8 @@ type siteData struct {
 	Path      string
 	NginxPath string
 
-	Database *store.Database
+	Database    *store.Database
+	PHPVersions []string
 
 	HTTPSEligible bool
 	HTTPSReason   string // why HTTPS isn't possible, when not eligible
@@ -326,6 +336,7 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	if db, err := s.st.DatabaseForSite(site.ID); err == nil {
 		d.Database = &db
 	}
+	d.PHPVersions = laravel.PHPVersions
 	d.HTTPSEligible, d.HTTPSReason = laravel.HTTPSEligible(site.Domain)
 	d.ACMEEmail, _ = s.st.Setting(keyACMEEmail)
 	d.ACMEStaging = s.cfg.ACMEServer != ""
@@ -441,6 +452,29 @@ func (s *Server) deploySite(w http.ResponseWriter, r *http.Request, _ store.Sess
 		return
 	}
 	redirect(w, r, "/jobs/"+strconv.FormatInt(id, 10))
+}
+
+// setPHP changes the site's PHP version; it takes effect on the next deploy,
+// which installs the version if needed and repoints Nginx at it.
+func (s *Server) setPHP(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	php := r.FormValue("php")
+	if !laravel.ValidPHP(php) {
+		setFlash(w, "err", "Choose a PHP version.")
+		redirect(w, r, s.siteURL(site))
+		return
+	}
+	if err := s.st.SetSitePHP(site.ID, php); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if php != site.PHPVersion {
+		setFlash(w, "ok", "PHP "+php+" selected. Click Deploy now to switch the site over.")
+	}
+	redirect(w, r, s.siteURL(site))
 }
 
 func (s *Server) saveScript(w http.ResponseWriter, r *http.Request, _ store.Session) {

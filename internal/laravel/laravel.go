@@ -16,9 +16,8 @@ import (
 )
 
 const (
-	SiteUser   = "skiff"       // unprivileged user every site runs as
-	SitesRoot  = "/home/skiff" // each site lives in SitesRoot/<domain>
-	PHPVersion = "8.3"
+	SiteUser  = "skiff"       // unprivileged user every site runs as
+	SitesRoot = "/home/skiff" // each site lives in SitesRoot/<domain>
 )
 
 func SitePath(domain string) string        { return SitesRoot + "/" + domain }
@@ -67,7 +66,6 @@ func (d *Deployer) run(ctx context.Context, w io.Writer, script string, opt exec
 const provisionTemplate = `
 export DEBIAN_FRONTEND=noninteractive
 export COMPOSER_ALLOW_SUPERUSER=1
-PHP="{{PHP}}"
 
 if ! command -v apt-get >/dev/null 2>&1; then
     echo "Skiff currently supports Ubuntu servers only." >&2
@@ -77,21 +75,18 @@ fi
 echo "==> Updating package lists"
 apt-get update -q
 
-echo "==> Installing base packages"
-apt-get install -y -q ca-certificates curl git unzip
+echo "==> Installing Nginx and base packages"
+apt-get install -y -q ca-certificates curl git unzip nginx
 
-if ! apt-cache show "php${PHP}-fpm" >/dev/null 2>&1; then
-    echo "==> PHP ${PHP} is not in the default repositories; adding ppa:ondrej/php"
-    apt-get install -y -q software-properties-common
-    add-apt-repository -y ppa:ondrej/php
-    apt-get update -q
+echo "==> Creating the {{USER}} user that sites run as"
+if ! id -u {{USER}} >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash {{USER}}
 fi
+chmod 750 {{SITES_ROOT}}
+usermod -aG {{USER}} www-data   # lets Nginx read public/ without opening up the home dir
 
-echo "==> Installing Nginx and PHP ${PHP}"
-apt-get install -y -q nginx \
-    "php${PHP}-fpm" "php${PHP}-cli" "php${PHP}-mbstring" "php${PHP}-xml" "php${PHP}-curl" \
-    "php${PHP}-zip" "php${PHP}-bcmath" "php${PHP}-intl" "php${PHP}-sqlite3" "php${PHP}-mysql" "php${PHP}-gd"
-update-alternatives --set php "/usr/bin/php${PHP}" >/dev/null 2>&1 || true
+{{ENSURE_PHP}}
+update-alternatives --set php "/usr/bin/php{{PHP}}" >/dev/null 2>&1 || true
 
 echo "==> Checking swap"
 if [ -z "$(swapon --show --noheadings 2>/dev/null)" ] && [ ! -f /swapfile ]; then
@@ -127,36 +122,10 @@ if ! command -v composer >/dev/null 2>&1; then
 fi
 composer --version
 
-echo "==> Creating the {{USER}} user that sites run as"
-if ! id -u {{USER}} >/dev/null 2>&1; then
-    useradd --create-home --shell /bin/bash {{USER}}
-fi
-chmod 750 {{SITES_ROOT}}
-usermod -aG {{USER}} www-data   # lets Nginx read public/ without opening up the home dir
-
-echo "==> Configuring PHP-FPM"
-cat > "/etc/php/${PHP}/fpm/pool.d/{{USER}}.conf" <<'EOF'
-; Managed by Skiff
-[{{USER}}]
-user = {{USER}}
-group = {{USER}}
-listen = {{SOCKET}}
-listen.owner = www-data
-listen.group = www-data
-listen.mode = 0660
-; ondemand: no idle PHP workers, which matters on tiny servers
-pm = ondemand
-pm.max_children = 5
-pm.process_idle_timeout = 10s
-pm.max_requests = 500
-EOF
-sed -i 's/^pm = dynamic/pm = ondemand/' "/etc/php/${PHP}/fpm/pool.d/www.conf"
-
 echo "==> Configuring Nginx"
 rm -f /etc/nginx/sites-enabled/default
 sed -i 's/# server_names_hash_bucket_size 64;/server_names_hash_bucket_size 64;/' /etc/nginx/nginx.conf
 nginx -t
-service "php${PHP}-fpm" restart
 service nginx restart
 
 echo "==> Server is ready"
@@ -166,17 +135,17 @@ nginx -v
 
 func provisionScript(php string) string {
 	return strings.NewReplacer(
+		"{{ENSURE_PHP}}", ensurePHPScript(php),
 		"{{PHP}}", php,
 		"{{USER}}", SiteUser,
 		"{{SITES_ROOT}}", SitesRoot,
-		"{{SOCKET}}", fpmSocket(php),
 	).Replace(provisionTemplate)
 }
 
-// Provision installs and configures everything Laravel sites need. It is
-// idempotent, so it is safe to run again.
+// Provision installs and configures everything Laravel sites need, with the
+// default PHP version. It is idempotent, so it is safe to run again.
 func (d *Deployer) Provision(ctx context.Context, w io.Writer) error {
-	return d.run(ctx, w, provisionScript(PHPVersion), executor.Options{})
+	return d.run(ctx, w, provisionScript(DefaultPHP), executor.Options{})
 }
 
 // ---- sites -----------------------------------------------------------------
@@ -279,7 +248,10 @@ echo "OK"`, site.Domain)
 		}
 	}
 
-	// 3. The user's deploy script.
+	// 3. The user's deploy script, with the site's PHP version first on PATH.
+	if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
+		return err
+	}
 	step(w, "Running deploy script")
 	env := []string{
 		"SKIFF_SITE_PATH=" + dir,
@@ -288,22 +260,26 @@ echo "OK"`, site.Domain)
 		"SKIFF_PHP=" + site.PHPVersion,
 		"COMPOSER_NO_INTERACTION=1",
 	}
-	if err := d.Exec.Run(ctx, "set -eo pipefail\n"+site.DeployScript, executor.Options{User: SiteUser, Dir: dir, Env: env}, w); err != nil {
+	script := "set -eo pipefail\n" + withPHP(site.PHPVersion, `echo "Using PHP $(php -r 'echo PHP_VERSION;')"`+"\n"+site.DeployScript)
+	if err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Dir: dir, Env: env}, w); err != nil {
 		return fmt.Errorf("deploy script: %w", err)
 	}
 
-	// 4. Web server.
+	// 4. Web server. The config is written once (later edits, e.g. certbot's,
+	// are kept), but its PHP-FPM socket always follows the site's PHP version.
 	step(w, "Configuring Nginx")
 	ng := fmt.Sprintf(`if [ ! -f %[1]s ]; then
     cat > %[1]s
     echo "Created %[1]s"
 else
     echo "Keeping existing %[1]s"
+    sed -i -E 's#unix:/run/php/php[0-9.]+-fpm-%[4]s\.sock#unix:%[5]s#' %[1]s
 fi
 ln -sfn %[1]s %[2]s
 nginx -t
 service nginx reload
-service php%[3]s-fpm reload`, q(NginxConfigPath(site.Domain)), q(nginxEnabledPath(site.Domain)), site.PHPVersion)
+service php%[3]s-fpm reload`, q(NginxConfigPath(site.Domain)), q(nginxEnabledPath(site.Domain)), site.PHPVersion,
+		SiteUser, fpmSocket(site.PHPVersion))
 	if err := d.run(ctx, w, ng, executor.Options{Stdin: strings.NewReader(NginxConfig(site))}); err != nil {
 		return fmt.Errorf("configure nginx: %w", err)
 	}
@@ -356,7 +332,7 @@ if [ -f %[1]s/bootstrap/cache/config.php ]; then
     cd %[1]s && php artisan config:cache
 fi`, dir)
 	var out bytes.Buffer
-	err := d.run(ctx, &out, script, executor.Options{User: SiteUser, Stdin: strings.NewReader(content)})
+	err := d.run(ctx, &out, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser, Stdin: strings.NewReader(content)})
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, strings.TrimSpace(out.String()))
 	}

@@ -32,6 +32,13 @@
     <input id="branch" name="branch" value="{{if $d.Branch}}{{$d.Branch}}{{else}}main{{end}}" required spellcheck="false" autocomplete="off">
   </label>
 
+  <label>PHP version
+    <select name="php">
+      {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $d.PHP}}selected{{end}}>PHP {{.}}</option>{{end}}
+    </select>
+    <span class="hint">Must satisfy your <code>composer.lock</code>. Laravel 13 needs 8.4+. Installed automatically on first deploy.</span>
+  </label>
+
   <label>Domain
     <input name="domain" value="{{$d.Domain}}" placeholder="app.example.com" required spellcheck="false" autocomplete="off">
     <span class="hint">Point its DNS A record at this server. No domain yet? Use the server's IP{{with $d.Host}}, e.g. <code>{{.}}</code>{{end}}.</span>

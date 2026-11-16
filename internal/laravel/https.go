@@ -205,7 +205,7 @@ if [ -f .env ] && grep -q '^APP_URL=%[2]s://%[4]s/\?$' .env; then
 else
     echo "APP_URL is customised or missing; left unchanged."
 fi`, shell.Quote(SitePath(site.Domain)), from, to, strings.ReplaceAll(site.Domain, ".", `\.`), site.Domain)
-	return d.run(ctx, w, script, executor.Options{User: SiteUser})
+	return d.run(ctx, w, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser})
 }
 
 // CertExpiry reads when the site's certificate expires.
