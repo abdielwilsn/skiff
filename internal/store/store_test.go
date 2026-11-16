@@ -100,6 +100,23 @@ func TestDatabases(t *testing.T) {
 	}
 }
 
+func TestUpgradeDeployScripts(t *testing.T) {
+	s := open(t)
+	oldDefault, edited, current := "old default\n", "old default\nmy extra step\n", "new default\n"
+	a, _ := s.CreateSite(Site{Domain: "a.test", Repo: "o/r", Branch: "main", PHPVersion: "8.4", NodeVersion: "24", DeployScript: oldDefault})
+	b, _ := s.CreateSite(Site{Domain: "b.test", Repo: "o/r", Branch: "main", PHPVersion: "8.4", DeployScript: edited})
+	n, err := s.UpgradeDeployScripts([]string{oldDefault}, current)
+	if err != nil || n != 1 {
+		t.Fatalf("UpgradeDeployScripts = %d, %v", n, err)
+	}
+	if x, _ := s.Site(a); x.DeployScript != current || x.NodeVersion != "24" {
+		t.Errorf("untouched default not upgraded: %+v", x)
+	}
+	if x, _ := s.Site(b); x.DeployScript != edited {
+		t.Error("an edited deploy script was overwritten")
+	}
+}
+
 func TestSessions(t *testing.T) {
 	s := open(t)
 	id, err := s.CreateUser("admin", "hash")

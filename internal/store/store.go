@@ -50,6 +50,7 @@ var migrations = []string{
 		site_id    INTEGER REFERENCES sites(id) ON DELETE SET NULL,
 		created_at INTEGER NOT NULL
 	)`,
+	`ALTER TABLE sites ADD COLUMN node_version TEXT NOT NULL DEFAULT '24'`,
 }
 
 const schemaV1 = `
@@ -282,7 +283,8 @@ type Site struct {
 	PHPVersion   string
 	DeployScript string
 	Status       string
-	HTTPS        bool // a Let's Encrypt certificate is installed
+	NodeVersion  string // Node.js major for asset builds; "" = none
+	HTTPS        bool   // a Let's Encrypt certificate is installed
 	CreatedAt    time.Time
 	DeployedAt   *time.Time
 }
@@ -295,7 +297,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, deploy_script, status, https, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, deploy_script, status, https, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -303,7 +305,7 @@ func scanSite(row scanner) (Site, error) {
 	var x Site
 	var created int64
 	var deployed sql.NullInt64
-	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.DeployScript, &x.Status, &x.HTTPS, &created, &deployed)
+	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.DeployScript, &x.Status, &x.HTTPS, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -313,8 +315,8 @@ func scanSite(row scanner) (Site, error) {
 }
 
 func (s *Store) CreateSite(x Site) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, deploy_script, status, created_at)
-		VALUES(?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.DeployScript, SiteNew, now())
+	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, created_at)
+		VALUES(?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew, now())
 	if isUnique(err) {
 		return 0, ErrDuplicate
 	}
@@ -358,6 +360,26 @@ func (s *Store) MarkSiteDeployed(id int64) error {
 func (s *Store) SetSiteHTTPS(id int64, on bool) error {
 	_, err := s.db.Exec(`UPDATE sites SET https = ? WHERE id = ?`, on, id)
 	return err
+}
+
+func (s *Store) SetSiteNode(id int64, major string) error {
+	_, err := s.db.Exec(`UPDATE sites SET node_version = ? WHERE id = ?`, major, id)
+	return err
+}
+
+// UpgradeDeployScripts replaces deploy scripts that are still exactly one of
+// Skiff's previous defaults with the current default. Edited scripts are kept.
+func (s *Store) UpgradeDeployScripts(previous []string, current string) (int64, error) {
+	var total int64
+	for _, old := range previous {
+		res, err := s.db.Exec(`UPDATE sites SET deploy_script = ? WHERE deploy_script = ?`, current, old)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, nil
 }
 
 func (s *Store) SetSitePHP(id int64, php string) error {

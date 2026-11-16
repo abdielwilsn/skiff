@@ -28,6 +28,16 @@
         <button class="btn small">Save</button>
       </form>
     </dd></div>
+    <div><dt>Node.js</dt><dd>
+      <form method="post" action="/sites/{{$s.ID}}/node" class="inline-form">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <select name="node" aria-label="Node.js version">
+          {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $s.NodeVersion}}selected{{end}}>Node {{.}}</option>{{end}}
+          <option value="" {{if not $s.NodeVersion}}selected{{end}}>None</option>
+        </select>
+        <button class="btn small">Save</button>
+      </form>
+    </dd></div>
     <div><dt>HTTPS</dt><dd>{{if $s.HTTPS}}<span class="badge badge-active">on</span> <a href="#https">certificate</a>{{else}}<a href="#https">off</a>{{end}}</dd></div>
     <div><dt>Database</dt><dd>{{with $d.Database}}<a href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}} <span class="badge badge-queued">{{.Status}}</span>{{end}}{{else}}<span class="muted">none (SQLite or .env)</span>{{end}}</dd></div>
     <div><dt>Last deploy</dt><dd>{{ago $s.DeployedAt}}</dd></div>

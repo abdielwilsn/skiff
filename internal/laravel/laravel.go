@@ -31,6 +31,29 @@ func fpmSocket(php string) string { return "/run/php/php" + php + "-fpm-" + Site
 // edit it per site, like Forge's deploy script.
 const DefaultDeployScript = `# Runs as the "skiff" user inside the site directory, after Skiff has
 # fetched the latest commit. Any failing command stops the deploy.
+# php, composer, node and npm are the versions chosen for this site.
+# Available: $SKIFF_SITE_PATH $SKIFF_BRANCH $SKIFF_DOMAIN $SKIFF_PHP $SKIFF_NODE
+
+composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+if ! grep -q '^APP_KEY=base64:' .env; then
+    php artisan key:generate --force
+fi
+
+# Frontend assets (Vite etc.)
+if [ -f package.json ]; then
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    npm run build
+fi
+
+php artisan migrate --force
+php artisan optimize
+`
+
+// PreviousDefaultDeployScripts are earlier versions of DefaultDeployScript.
+// Sites still using one unchanged are upgraded to the current default.
+var PreviousDefaultDeployScripts = []string{`# Runs as the "skiff" user inside the site directory, after Skiff has
+# fetched the latest commit. Any failing command stops the deploy.
 # Available: $SKIFF_SITE_PATH $SKIFF_BRANCH $SKIFF_DOMAIN $SKIFF_PHP
 
 composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
@@ -41,7 +64,7 @@ fi
 
 php artisan migrate --force
 php artisan optimize
-`
+`}
 
 type Deployer struct {
 	Exec executor.Executor
@@ -252,15 +275,25 @@ echo "OK"`, site.Domain)
 	if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
 		return err
 	}
+	if err := d.EnsureNode(ctx, w, dir, site.NodeVersion); err != nil {
+		return err
+	}
 	step(w, "Running deploy script")
 	env := []string{
 		"SKIFF_SITE_PATH=" + dir,
 		"SKIFF_BRANCH=" + site.Branch,
 		"SKIFF_DOMAIN=" + site.Domain,
 		"SKIFF_PHP=" + site.PHPVersion,
+		"SKIFF_NODE=" + site.NodeVersion,
 		"COMPOSER_NO_INTERACTION=1",
+		"NPM_CONFIG_UPDATE_NOTIFIER=false",
+		"NPM_CONFIG_FUND=false",
 	}
-	script := "set -eo pipefail\n" + withPHP(site.PHPVersion, `echo "Using PHP $(php -r 'echo PHP_VERSION;')"`+"\n"+site.DeployScript)
+	banner := `echo "Using PHP $(php -r 'echo PHP_VERSION;')"` + "\n"
+	if site.NodeVersion != "" {
+		banner += `if command -v node >/dev/null 2>&1; then echo "Using Node.js $(node -v)"; fi` + "\n"
+	}
+	script := "set -eo pipefail\n" + withPHP(site.PHPVersion, withNode(site.NodeVersion, banner+site.DeployScript))
 	if err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Dir: dir, Env: env}, w); err != nil {
 		return fmt.Errorf("deploy script: %w", err)
 	}

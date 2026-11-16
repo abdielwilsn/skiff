@@ -39,6 +39,14 @@
     <span class="hint">Must satisfy your <code>composer.lock</code>. Laravel 13 needs 8.4+. Installed automatically on first deploy.</span>
   </label>
 
+  <label>Node.js
+    <select name="node">
+      {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $d.Node}}selected{{end}}>Node {{.}} (LTS)</option>{{end}}
+      <option value="" {{if not $d.Node}}selected{{end}}>None</option>
+    </select>
+    <span class="hint">Used to build frontend assets (<code>npm run build</code> for Vite). Only installed if the repo has a <code>package.json</code>.</span>
+  </label>
+
   <label>Domain
     <input name="domain" value="{{$d.Domain}}" placeholder="app.example.com" required spellcheck="false" autocomplete="off">
     <span class="hint">Point its DNS A record at this server. No domain yet? Use the server's IP{{with $d.Host}}, e.g. <code>{{.}}</code>{{end}}.</span>
