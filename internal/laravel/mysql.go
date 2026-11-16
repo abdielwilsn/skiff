@@ -94,10 +94,11 @@ func (spec DBSpec) valid() error {
 	return nil
 }
 
-const installMySQLTemplate = `
+const installMySQLTemplate = pkgsInstalledFn + `
 export DEBIAN_FRONTEND=noninteractive
-if ! dpkg -s mysql-server >/dev/null 2>&1; then
+if ! pkgs_installed mysql-server; then
     echo "==> Installing MySQL"
+    dpkg --configure -a || true   # finish any interrupted install first
     apt-get update -q
     apt-get install -y -q mysql-server
 else
