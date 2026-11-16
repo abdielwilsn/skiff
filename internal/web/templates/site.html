@@ -19,7 +19,15 @@
   <dl class="facts">
     <div><dt>Repository</dt><dd><a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a></dd></div>
     <div><dt>Branch</dt><dd><code>{{$s.Branch}}</code></dd></div>
-    <div><dt>PHP</dt><dd>{{$s.PHPVersion}}</dd></div>
+    <div><dt>PHP</dt><dd>
+      <form method="post" action="/sites/{{$s.ID}}/php" class="inline-form">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <select name="php" aria-label="PHP version">
+          {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $s.PHPVersion}}selected{{end}}>PHP {{.}}</option>{{end}}
+        </select>
+        <button class="btn small">Save</button>
+      </form>
+    </dd></div>
     <div><dt>HTTPS</dt><dd>{{if $s.HTTPS}}<span class="badge badge-active">on</span> <a href="#https">certificate</a>{{else}}<a href="#https">off</a>{{end}}</dd></div>
     <div><dt>Database</dt><dd>{{with $d.Database}}<a href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}} <span class="badge badge-queued">{{.Status}}</span>{{end}}{{else}}<span class="muted">none (SQLite or .env)</span>{{end}}</dd></div>
     <div><dt>Last deploy</dt><dd>{{ago $s.DeployedAt}}</dd></div>

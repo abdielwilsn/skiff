@@ -360,6 +360,11 @@ func (s *Store) SetSiteHTTPS(id int64, on bool) error {
 	return err
 }
 
+func (s *Store) SetSitePHP(id int64, php string) error {
+	_, err := s.db.Exec(`UPDATE sites SET php_version = ? WHERE id = ?`, php, id)
+	return err
+}
+
 func (s *Store) SetDeployScript(id int64, script string) error {
 	_, err := s.db.Exec(`UPDATE sites SET deploy_script = ? WHERE id = ?`, script, id)
 	return err

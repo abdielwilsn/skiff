@@ -219,7 +219,7 @@ if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi`,
 		shell.Quote(SitePath(site.Domain)), spec.Name, spec.User, spec.Name, spec.User)
 	// The password is passed in the environment, not the script, so it isn't logged.
 	opt := executor.Options{User: SiteUser, Env: []string{"SKIFF_DB_PASSWORD=" + spec.Password}}
-	if err := d.run(ctx, w, script, opt); err != nil {
+	if err := d.run(ctx, w, withPHP(site.PHPVersion, script), opt); err != nil {
 		return fmt.Errorf("update .env: %w", err)
 	}
 	return nil
@@ -233,5 +233,5 @@ func (d *Deployer) Migrate(ctx context.Context, w io.Writer, site store.Site) er
 else
     echo "Site isn't fully deployed yet; migrations will run on the next deploy."
 fi`
-	return d.run(ctx, w, script, executor.Options{User: SiteUser, Dir: SitePath(site.Domain)})
+	return d.run(ctx, w, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser, Dir: SitePath(site.Domain)})
 }

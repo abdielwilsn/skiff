@@ -29,7 +29,7 @@ account.
 
 Then in the panel:
 
-1. **Provision server**: installs Nginx, PHP 8.3, Composer, Git and creates the
+1. **Provision server**: installs Nginx, PHP 8.4, Composer, Git and creates the
    unprivileged `skiff` user that sites run as.
 2. **Settings → Panel address & HTTPS**: give the panel a domain (e.g.
    `panel.example.com`) so you stop logging in over plain HTTP. Do this before
@@ -53,6 +53,18 @@ Then in the panel:
 
 Every job's output streams live in the UI and is kept under
 `/var/lib/skiff/logs`.
+
+## PHP versions
+
+Each site picks its PHP version (8.2, 8.3, 8.4 or 8.5; new sites default to
+8.4, which Laravel 13 needs). A version is installed the first time a site uses
+it, from Ubuntu's repositories or `ppa:ondrej/php`, with its own `ondemand`
+PHP-FPM pool, so unused versions cost almost nothing.
+
+Changing a site's version on its page takes effect on the next deploy: Skiff
+installs the version if needed, runs the deploy script with that `php` (and
+`composer`) first on `PATH`, and repoints the site's Nginx config at the
+matching PHP-FPM socket, keeping any other edits (including certbot's).
 
 ## MySQL databases
 

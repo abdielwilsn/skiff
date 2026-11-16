@@ -157,6 +157,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sites/{id}", s.auth(s.sitePage))
 	m.HandleFunc("POST /sites/{id}/deploy", s.auth(s.deploySite))
 	m.HandleFunc("POST /sites/{id}/script", s.auth(s.saveScript))
+	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
 	m.HandleFunc("GET /sites/{id}/env", s.auth(s.envPage))
 	m.HandleFunc("POST /sites/{id}/env", s.auth(s.saveEnv))
 	m.HandleFunc("POST /sites/{id}/delete", s.auth(s.deleteSite))
