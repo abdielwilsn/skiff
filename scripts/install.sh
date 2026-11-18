@@ -128,8 +128,8 @@ download() {
     fi
     local file="skiff-linux-$arch"
     say "Downloading $file ($version)"
-    curl -fsSL --retry 3 -o "$dir/$file" "$base/$file" || fail "download failed: $base/$file"
-    curl -fsSL --retry 3 -o "$dir/SHA256SUMS" "$base/SHA256SUMS" || fail "download failed: $base/SHA256SUMS"
+    curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 -o "$dir/$file" "$base/$file" || fail "download failed: $base/$file"
+    curl -fsSL --retry 4 --retry-all-errors --retry-delay 2 -o "$dir/SHA256SUMS" "$base/SHA256SUMS" || fail "download failed: $base/SHA256SUMS"
     say "Verifying checksum"
     (cd "$dir" && grep " $file\$" SHA256SUMS | sha256sum -c --quiet -) || fail "checksum mismatch for $file; not installing"
     mv "$dir/$file" "$dir/skiff"
