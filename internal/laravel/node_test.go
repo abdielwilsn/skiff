@@ -55,3 +55,28 @@ func TestDeployBuildsAssetsWithSiteNode(t *testing.T) {
 		t.Error("default deploy script steps are out of order")
 	}
 }
+
+func TestDefaultScriptClearsRouteCacheBeforeBuild(t *testing.T) {
+	ds := DefaultDeployScript
+	clear, build, cache := strings.Index(ds, "php artisan route:clear"), strings.Index(ds, "npm run build"), strings.Index(ds, "php artisan optimize\n")
+	if clear < 0 || !(strings.Index(ds, "composer install") < clear && clear < build && build < cache) {
+		t.Fatal("route/config caches must be cleared after composer install and before the asset build (Wayfinder reads routes)")
+	}
+	var commands []string
+	for _, line := range strings.Split(ds, "\n") {
+		if !strings.HasPrefix(strings.TrimSpace(line), "#") {
+			commands = append(commands, line)
+		}
+	}
+	if cmds := strings.Join(commands, "\n"); strings.Contains(cmds, "optimize:clear") || strings.Contains(cmds, "cache:clear") {
+		t.Fatal("don't clear the app cache: on a first deploy its database table may not exist")
+	}
+	for i, old := range PreviousDefaultDeployScripts {
+		if old == DefaultDeployScript {
+			t.Fatalf("previous default #%d equals the current one", i)
+		}
+	}
+	if len(PreviousDefaultDeployScripts) < 2 {
+		t.Fatal("both older defaults must stay listed so untouched sites upgrade")
+	}
+}

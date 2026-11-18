@@ -36,6 +36,13 @@ const DefaultDeployScript = `# Runs as the "skiff" user inside the site director
 
 composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
 
+# Drop the previous deploy's cached config and routes so everything below
+# (including Vite plugins such as Wayfinder) sees this commit's routes.
+# (Not optimize:clear: it also empties the app cache, which can live in a
+# database table that doesn't exist yet on a first deploy.)
+php artisan config:clear
+php artisan route:clear
+
 if ! grep -q '^APP_KEY=base64:' .env; then
     php artisan key:generate --force
 fi
@@ -53,6 +60,25 @@ php artisan optimize
 // PreviousDefaultDeployScripts are earlier versions of DefaultDeployScript.
 // Sites still using one unchanged are upgraded to the current default.
 var PreviousDefaultDeployScripts = []string{`# Runs as the "skiff" user inside the site directory, after Skiff has
+# fetched the latest commit. Any failing command stops the deploy.
+# php, composer, node and npm are the versions chosen for this site.
+# Available: $SKIFF_SITE_PATH $SKIFF_BRANCH $SKIFF_DOMAIN $SKIFF_PHP $SKIFF_NODE
+
+composer install --no-dev --no-interaction --prefer-dist --optimize-autoloader
+
+if ! grep -q '^APP_KEY=base64:' .env; then
+    php artisan key:generate --force
+fi
+
+# Frontend assets (Vite etc.)
+if [ -f package.json ]; then
+    if [ -f package-lock.json ]; then npm ci; else npm install; fi
+    npm run build
+fi
+
+php artisan migrate --force
+php artisan optimize
+`, `# Runs as the "skiff" user inside the site directory, after Skiff has
 # fetched the latest commit. Any failing command stops the deploy.
 # Available: $SKIFF_SITE_PATH $SKIFF_BRANCH $SKIFF_DOMAIN $SKIFF_PHP
 
