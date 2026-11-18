@@ -1,71 +1,80 @@
 {{define "content"}}
 {{$d := .Data}}
+<div class="crumbs"><a href="/">Sites</a><span>/</span><span>New</span></div>
 <div class="page-head">
-  <h1>New site</h1>
+  <div>
+    <h1>New site</h1>
+    <p class="page-sub">Deploy a Laravel app from GitHub. Skiff clones it, installs dependencies, builds assets and serves it.</p>
+  </div>
 </div>
 
-{{if not $d.Provisioned}}
-<div class="flash flash-err">This server hasn't been provisioned yet, so the deploy will fail. <a href="/">Provision it first</a>.</div>
-{{end}}
-{{with $d.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+{{if not $d.Provisioned}}{{template "flash" (dict "Kind" "warn" "Msg" "This server hasn't been provisioned yet, so the deploy will fail. Provision it from the Sites page first.")}}{{end}}
+{{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
 
-<form method="post" action="/sites" class="card stack form-card">
+<form method="post" action="/sites" class="card">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-
-  {{if $d.Repos}}
-  <label>Pick a repository
-    <select id="repo-pick">
-      <option value="">Choose…</option>
-      {{range $d.Repos}}<option value="{{.FullName}}" data-branch="{{.DefaultBranch}}" {{if eq .FullName $d.Repo}}selected{{end}}>{{.FullName}}{{if .Private}} (private){{end}}</option>{{end}}
-    </select>
-  </label>
-  {{else if not $d.Connected}}
-  <p class="hint">Only public repositories work until you <a href="/settings">connect GitHub</a>.</p>
-  {{end}}
-
-  <label>Repository
-    <input id="repo" name="repo" value="{{$d.Repo}}" placeholder="owner/name" required spellcheck="false" autocomplete="off">
-    <span class="hint">GitHub <code>owner/name</code> or URL.</span>
-  </label>
-
-  <label>Branch
-    <input id="branch" name="branch" value="{{if $d.Branch}}{{$d.Branch}}{{else}}main{{end}}" required spellcheck="false" autocomplete="off">
-  </label>
-
-  <label>PHP version
-    <select name="php">
-      {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $d.PHP}}selected{{end}}>PHP {{.}}</option>{{end}}
-    </select>
-    <span class="hint">Must satisfy your <code>composer.lock</code>. Laravel 13 needs 8.4+. Installed automatically on first deploy.</span>
-  </label>
-
-  <label>Node.js
-    <select name="node">
-      {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $d.Node}}selected{{end}}>Node {{.}} (LTS)</option>{{end}}
-      <option value="" {{if not $d.Node}}selected{{end}}>None</option>
-    </select>
-    <span class="hint">Used to build frontend assets (<code>npm run build</code> for Vite). Only installed if the repo has a <code>package.json</code>.</span>
-  </label>
-
-  <label>Domain
-    <input name="domain" value="{{$d.Domain}}" placeholder="app.example.com" required spellcheck="false" autocomplete="off">
-    <span class="hint">Point its DNS A record at this server. No domain yet? Use the server's IP{{with $d.Host}}, e.g. <code>{{.}}</code>{{end}}.</span>
-  </label>
-
-  {{if $d.MySQL}}
-  <label class="check">
-    <input type="checkbox" name="mysql" value="1" {{if $d.CreateDB}}checked{{end}}>
-    <span>Create a MySQL database for this site
-      <span class="hint">Skiff creates a database and user, and writes the <code>DB_*</code> settings into <code>.env</code> before migrations run.</span>
-    </span>
-  </label>
-  {{else}}
-  <p class="hint">The site will use SQLite. For MySQL, <a href="/databases">install it on the Databases page</a> first.</p>
-  {{end}}
-
-  <div class="form-actions">
-    <button class="btn primary">Create site &amp; deploy</button>
-    <a class="btn" href="/">Cancel</a>
+  <div class="card-body stack">
+    <h2>Source</h2>
+    {{if $d.Repos}}
+    <label>Import from GitHub
+      <select id="repo-pick">
+        <option value="">Choose a repository…</option>
+        {{range $d.Repos}}<option value="{{.FullName}}" data-branch="{{.DefaultBranch}}" {{if eq .FullName $d.Repo}}selected{{end}}>{{.FullName}}{{if .Private}} (private){{end}}</option>{{end}}
+      </select>
+    </label>
+    {{else if not $d.Connected}}
+    <p class="hint">Only public repositories work until you <a href="/settings">connect GitHub</a>.</p>
+    {{end}}
+    <div class="form-grid">
+      <label>Repository
+        <input id="repo" name="repo" value="{{$d.Repo}}" placeholder="owner/name" required spellcheck="false" autocomplete="off">
+        <span class="field-hint">GitHub <code>owner/name</code> or URL.</span>
+      </label>
+      <label>Branch
+        <input id="branch" name="branch" value="{{if $d.Branch}}{{$d.Branch}}{{else}}main{{end}}" required spellcheck="false" autocomplete="off">
+        <span class="field-hint">Deploys and auto-deploys use this branch.</span>
+      </label>
+    </div>
+  </div>
+  <hr class="divider">
+  <div class="card-body stack">
+    <h2>Domain &amp; runtime</h2>
+    <div class="form-grid">
+      <label class="full">Domain
+        <input name="domain" value="{{$d.Domain}}" placeholder="app.example.com" required spellcheck="false" autocomplete="off">
+        <span class="field-hint">Point its DNS A record at this server. No domain yet? Use the server's IP{{with $d.Host}}, e.g. <code>{{.}}</code>{{end}}.</span>
+      </label>
+      <label>PHP
+        <select name="php">
+          {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $d.PHP}}selected{{end}}>PHP {{.}}</option>{{end}}
+        </select>
+        <span class="field-hint">Must satisfy your <code>composer.lock</code>. Laravel 13 needs 8.4+.</span>
+      </label>
+      <label>Node.js
+        <select name="node">
+          {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $d.Node}}selected{{end}}>Node {{.}} (LTS)</option>{{end}}
+          <option value="" {{if not $d.Node}}selected{{end}}>None</option>
+        </select>
+        <span class="field-hint">Builds Vite assets. Only installed if the repo has a <code>package.json</code>.</span>
+      </label>
+    </div>
+    {{if $d.MySQL}}
+    <label class="check">
+      <input type="checkbox" name="mysql" value="1" {{if $d.CreateDB}}checked{{end}}>
+      <span>Create a MySQL database for this site
+        <span class="field-hint">Skiff creates a database and user, and writes the <code>DB_*</code> settings into <code>.env</code> before migrations run.</span>
+      </span>
+    </label>
+    {{else}}
+    <p class="hint">The site will use SQLite. For MySQL, <a href="/databases">install it on the Databases page</a> first.</p>
+    {{end}}
+  </div>
+  <div class="card-footer">
+    <span>PHP and Node are installed on the first deploy if needed.</span>
+    <div class="actions">
+      <a class="btn ghost" href="/">Cancel</a>
+      <button class="btn primary">{{template "i-rocket"}} Deploy</button>
+    </div>
   </div>
 </form>
 {{end}}

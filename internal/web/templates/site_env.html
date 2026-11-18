@@ -1,19 +1,24 @@
 {{define "content"}}
 {{$d := .Data}}
+<div class="crumbs"><a href="/">Sites</a><span>/</span><a href="/sites/{{$d.Site.ID}}">{{$d.Site.Domain}}</a><span>/</span><span>Environment</span></div>
 <div class="page-head">
   <div>
-    <p class="crumb"><a href="/">Sites</a> / <a href="/sites/{{$d.Site.ID}}">{{$d.Site.Domain}}</a> /</p>
     <h1>Environment</h1>
+    <p class="page-sub">The <code>.env</code> file of <strong>{{$d.Site.Domain}}</strong>, read live from the server.</p>
   </div>
 </div>
-{{with $d.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
-<form method="post" action="/sites/{{$d.Site.ID}}/env" class="card stack">
+{{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+<form method="post" action="/sites/{{$d.Site.ID}}/env" class="card">
   <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <p class="hint">This is the site's <code>.env</code> file. If the app caches its config, Skiff re-runs <code>php artisan config:cache</code> after saving.</p>
-  <textarea name="env" class="code" rows="24" spellcheck="false">{{$d.Env}}</textarea>
-  <div class="form-actions">
-    <button class="btn primary">Save .env</button>
-    <a class="btn" href="/sites/{{$d.Site.ID}}">Back</a>
+  <div class="card-body">
+    <textarea name="env" class="code" rows="26" spellcheck="false" aria-label=".env contents">{{$d.Env}}</textarea>
+  </div>
+  <div class="card-footer">
+    <span>Saved atomically. If the app caches config, <code>php artisan config:cache</code> runs afterwards.</span>
+    <div class="actions">
+      <a class="btn ghost" href="/sites/{{$d.Site.ID}}">Cancel</a>
+      <button class="btn primary">Save</button>
+    </div>
   </div>
 </form>
 {{end}}
