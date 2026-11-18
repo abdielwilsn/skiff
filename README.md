@@ -54,6 +54,24 @@ Then in the panel:
 Every job's output streams live in the UI and is kept under
 `/var/lib/skiff/logs`.
 
+## Deploying new commits
+
+**Deploy now** on a site always fetches the newest commit of its branch
+(`git fetch` + `git reset --hard`), then runs the deploy script.
+
+**Push to deploy**: on a site's page, **Turn on auto-deploy** adds a webhook
+to the GitHub repository (through your connected GitHub account, which needs
+admin access to the repo). From then on every push to the site's branch queues
+a deploy; the job title shows the commit and who pushed it.
+
+- Deliveries go to `https://<panel domain>/hooks/github/<site id>`, so the panel
+  needs its HTTPS domain first (Settings → Panel address & HTTPS).
+- Each site has its own random secret; deliveries without a valid
+  `X-Hub-Signature-256` are rejected, and pushes to other branches are ignored.
+- Pushes that arrive while a deploy is already queued are folded into it, since
+  every deploy fetches the latest commit.
+- Turning auto-deploy off, or deleting the site, removes the webhook.
+
 ## PHP versions
 
 Each site picks its PHP version (8.2, 8.3, 8.4 or 8.5; new sites default to

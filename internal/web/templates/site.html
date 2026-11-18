@@ -47,6 +47,29 @@
   <p><a href="/sites/{{$s.ID}}/env">Edit environment (.env) →</a></p>
 </section>
 
+<h2 class="section-title" id="autodeploy">Push to deploy</h2>
+<section class="card stack">
+{{if $s.AutoDeploy}}
+  <p><span class="badge badge-active">on</span> Every push to <code>{{$s.Branch}}</code> on <a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a> deploys this site automatically.</p>
+  <p class="hint">GitHub sends pushes to <code>{{$d.HookBase}}/hooks/github/{{$s.ID}}</code>. Its delivery history is in the repo's Settings → Webhooks.</p>
+  <form method="post" action="/sites/{{$s.ID}}/autodeploy/disable" data-confirm="Turn off auto-deploy for {{$s.Domain}}? Skiff removes the webhook from GitHub.">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn">Turn off</button>
+  </form>
+{{else if not $d.GitHubConnected}}
+  <p class="muted">Connect GitHub in <a href="/settings">Settings</a> to deploy automatically on every push.</p>
+{{else if not $d.HookBase}}
+  <p class="muted">GitHub needs to reach this panel over HTTPS. Set up <a href="/settings#panel">Settings → Panel address &amp; HTTPS</a> first, then turn this on.</p>
+{{else}}
+  <p>Deploy <code>{{$s.Domain}}</code> automatically every time you push to <code>{{$s.Branch}}</code>. Skiff adds a webhook to <code>{{$s.Repo}}</code> on GitHub; your account needs admin access to the repo.</p>
+  <form method="post" action="/sites/{{$s.ID}}/autodeploy">
+    <input type="hidden" name="csrf" value="{{.CSRF}}">
+    <button class="btn primary">Turn on auto-deploy</button>
+  </form>
+{{end}}
+  <p class="hint">Either way, <strong>Deploy now</strong> always pulls the newest commit of <code>{{$s.Branch}}</code> before building.</p>
+</section>
+
 <h2 class="section-title" id="https">HTTPS</h2>
 <section class="card stack">
 {{if $s.HTTPS}}

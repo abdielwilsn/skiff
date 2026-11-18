@@ -51,6 +51,9 @@ var migrations = []string{
 		created_at INTEGER NOT NULL
 	)`,
 	`ALTER TABLE sites ADD COLUMN node_version TEXT NOT NULL DEFAULT '24'`,
+	`ALTER TABLE sites ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sites ADD COLUMN hook_secret TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sites ADD COLUMN hook_id INTEGER NOT NULL DEFAULT 0`,
 }
 
 const schemaV1 = `
@@ -284,6 +287,9 @@ type Site struct {
 	DeployScript string
 	Status       string
 	NodeVersion  string // Node.js major for asset builds; "" = none
+	AutoDeploy   bool   // deploy on every push to Branch (GitHub webhook)
+	HookSecret   string // HMAC secret GitHub signs webhook payloads with
+	HookID       int64  // GitHub's id for the webhook, to remove it later
 	HTTPS        bool   // a Let's Encrypt certificate is installed
 	CreatedAt    time.Time
 	DeployedAt   *time.Time
@@ -297,7 +303,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, node_version, deploy_script, status, https, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -305,7 +311,7 @@ func scanSite(row scanner) (Site, error) {
 	var x Site
 	var created int64
 	var deployed sql.NullInt64
-	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.DeployScript, &x.Status, &x.HTTPS, &created, &deployed)
+	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -360,6 +366,22 @@ func (s *Store) MarkSiteDeployed(id int64) error {
 func (s *Store) SetSiteHTTPS(id int64, on bool) error {
 	_, err := s.db.Exec(`UPDATE sites SET https = ? WHERE id = ?`, on, id)
 	return err
+}
+
+// SetAutoDeploy turns push-to-deploy on (with the webhook's secret and id)
+// or off (pass false, "", 0).
+func (s *Store) SetAutoDeploy(id int64, on bool, secret string, hookID int64) error {
+	_, err := s.db.Exec(`UPDATE sites SET auto_deploy = ?, hook_secret = ?, hook_id = ? WHERE id = ?`, on, secret, hookID, id)
+	return err
+}
+
+// HasQueuedJob reports whether the site has a job of this kind waiting to run
+// (not yet started).
+func (s *Store) HasQueuedJob(siteID int64, kind string) (bool, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE site_id = ? AND kind = ? AND status = ?`,
+		siteID, kind, JobQueued).Scan(&n)
+	return n > 0, err
 }
 
 func (s *Store) SetSiteNode(id int64, major string) error {

@@ -165,6 +165,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sites/{id}/script", s.auth(s.saveScript))
 	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
 	m.HandleFunc("POST /sites/{id}/node", s.auth(s.setNode))
+	m.HandleFunc("POST /sites/{id}/autodeploy", s.auth(s.enableAutoDeploy))
+	m.HandleFunc("POST /sites/{id}/autodeploy/disable", s.auth(s.disableAutoDeploy))
+
+	// Public: GitHub can't log in, so these are authenticated by HMAC signature.
+	m.HandleFunc("POST /hooks/github/{id}", s.githubWebhook)
 	m.HandleFunc("GET /sites/{id}/env", s.auth(s.envPage))
 	m.HandleFunc("POST /sites/{id}/env", s.auth(s.saveEnv))
 	m.HandleFunc("POST /sites/{id}/delete", s.auth(s.deleteSite))

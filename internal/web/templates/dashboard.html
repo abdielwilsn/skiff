@@ -38,7 +38,7 @@
   <tbody>
   {{range $d.Sites}}
     <tr>
-      <td><a href="/sites/{{.ID}}"><strong>{{.Domain}}</strong></a>{{if .HTTPS}} <span class="badge badge-active" title="HTTPS enabled">https</span>{{end}}</td>
+      <td><a href="/sites/{{.ID}}"><strong>{{.Domain}}</strong></a>{{if .HTTPS}} <span class="badge badge-active" title="HTTPS enabled">https</span>{{end}}{{if .AutoDeploy}} <span class="badge" title="Deploys on every push to {{.Branch}}">auto</span>{{end}}</td>
       <td>{{.Repo}}</td>
       <td><code>{{.Branch}}</code></td>
       <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
