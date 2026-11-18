@@ -12,20 +12,26 @@ clones it, installs dependencies, and serves it with Nginx + PHP-FPM.
 
 ## Install on a server
 
-Requirements: Ubuntu 22.04 or 24.04, root access.
+Requirements: Ubuntu 22.04 or 24.04 (x86-64 or ARM), root access.
 
 ```bash
-# On your machine (needs Go 1.26+, or use `make docker-release` with Docker)
-make release
-scp dist/skiff-linux-amd64 scripts/install.sh root@YOUR_SERVER:/root/
-
-# On the server
-sudo SKIFF_PORT=8090 /root/install.sh /root/skiff-linux-amd64
+curl -fsSL https://raw.githubusercontent.com/abdielwilsn/skiff/main/scripts/install.sh | sudo bash
 ```
 
-The installer creates a `skiff` systemd service and prints a one-time setup
-link (`http://SERVER_IP:8090/setup?token=…`). Open it to create the admin
-account.
+The installer downloads the latest release for your CPU from GitHub, verifies
+its SHA-256 checksum, installs it to `/usr/local/bin/skiff`, creates a `skiff`
+systemd service and prints a one-time setup link
+(`http://SERVER_IP:8090/setup?token=…`). Open it (ideally through an SSH tunnel)
+to create the admin account.
+
+Options: `| sudo bash -s -- --version v0.2.0` installs a specific release, and
+`--port 9000` picks the panel port on a fresh install.
+
+### Updating
+
+Run the same command again. It installs the newest release, restarts the
+service and keeps your data (`/var/lib/skiff`), settings and service file. If
+you're already on the latest version it does nothing.
 
 Then in the panel:
 
@@ -184,6 +190,28 @@ Encrypt's staging CA (certificates won't be browser-trusted):
 
 ```bash
 skiff serve --acme-server https://acme-staging-v02.api.letsencrypt.org/directory
+```
+
+## Releasing
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a
+version tag is pushed:
+
+```bash
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+The workflow runs the tests, builds `skiff-linux-amd64` and `skiff-linux-arm64`
+with the tag as their version, writes `SHA256SUMS`, and publishes a GitHub
+release with generated notes. Servers pick it up the next time someone runs the
+install command.
+
+To install a build from your own machine instead (no release needed):
+
+```bash
+make docker-release
+scp dist/skiff-linux-amd64 scripts/install.sh root@SERVER:/root/
+ssh root@SERVER 'bash /root/install.sh /root/skiff-linux-amd64'
 ```
 
 ## Develop locally

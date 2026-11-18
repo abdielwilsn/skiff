@@ -1,0 +1,40 @@
+# Builds and publishes a release when a version tag is pushed:
+#   git tag v0.2.0 && git push origin v0.2.0
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the release and upload assets
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go vet ./... && go test ./...
+
+      - name: Build
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          make release VERSION="$VERSION"
+          cp scripts/install.sh dist/install.sh
+          cd dist && sha256sum skiff-linux-amd64 skiff-linux-arm64 install.sh > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" dist/skiff-linux-amd64 dist/skiff-linux-arm64 dist/install.sh dist/SHA256SUMS \
+            --title "Skiff $TAG" --generate-notes --verify-tag
