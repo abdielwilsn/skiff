@@ -668,7 +668,7 @@ func (s *Server) jobPage(w http.ResponseWriter, r *http.Request, sess store.Sess
 			d.Site = &site
 		}
 	}
-	s.render(w, r, "job", http.StatusOK, pageFor(sess, j.Title, "", d))
+	s.render(w, r, "job", http.StatusOK, pageFor(sess, j.Title, "sites", d))
 }
 
 func (s *Server) jobLog(w http.ResponseWriter, r *http.Request, _ store.Session) {

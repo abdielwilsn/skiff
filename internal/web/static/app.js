@@ -8,6 +8,27 @@
     if (msg && !window.confirm(msg)) e.preventDefault();
   });
 
+  // Mirrors statusOf() in server.go: label, tone, pulse.
+  var STATUS = {
+    queued: ["Queued", "neutral", false],
+    running: ["Running", "info", true],
+    success: ["Succeeded", "ok", false],
+    failed: ["Failed", "err", false]
+  };
+  function setStatus(el, s) {
+    var m = STATUS[s] || [s, "neutral", false];
+    el.className = "status tone-" + m[1] + (m[2] ? " pulse" : "");
+    var label = el.querySelector(".label");
+    if (label) label.textContent = m[0];
+  }
+
+  // Close the account menu when clicking elsewhere.
+  document.addEventListener("click", function (e) {
+    document.querySelectorAll("details.menu[open]").forEach(function (d) {
+      if (!d.contains(e.target)) d.removeAttribute("open");
+    });
+  });
+
   // Live job log.
   var log = document.getElementById("job-log");
   if (log) {
@@ -26,14 +47,13 @@
           if (d.data) log.appendChild(document.createTextNode(d.data));
           offset = d.offset;
           if (stick) log.scrollTop = log.scrollHeight;
-          status.textContent = d.status;
-          status.className = "badge badge-" + d.status;
-          if (d.duration) duration.textContent = "· " + d.duration;
+          setStatus(status, d.status);
+          if (d.duration) duration.textContent = d.duration;
           if (d.link) {
             var next = document.getElementById("job-next");
             var a = document.getElementById("job-next-link");
             a.href = d.link;
-            a.textContent = "Open the panel at " + d.link.replace(/\/settings$/, "");
+            a.textContent = "Open " + d.link.replace(/\/settings$/, "");
             next.hidden = false;
           }
           if (!d.done || d.more) setTimeout(poll, d.more ? 50 : 1000);

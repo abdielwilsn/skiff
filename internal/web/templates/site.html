@@ -1,133 +1,196 @@
 {{define "content"}}
 {{$d := .Data}}
 {{$s := $d.Site}}
+{{$csrf := .CSRF}}
+<div class="crumbs"><a href="/">Sites</a><span>/</span><span>{{$s.Domain}}</span></div>
 <div class="page-head">
-  <div>
-    <p class="crumb"><a href="/">Sites</a> /</p>
-    <h1>{{$s.Domain}} <span class="badge badge-{{$s.Status}}">{{$s.Status}}</span></h1>
+  <div class="page-title">
+    <span class="monogram lg">{{initial $s.Domain}}</span>
+    <div>
+      <h1>{{$s.Domain}}</h1>
+      <p class="page-sub row">{{template "status" $s.Status}}<span class="subtle">·</span><span>{{if $s.DeployedAt}}Deployed {{ago $s.DeployedAt}}{{else}}Not deployed yet{{end}}</span></p>
+    </div>
   </div>
   <div class="actions">
-    <a class="btn" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">Open site ↗</a>
+    <a class="btn" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">Visit {{template "i-external"}}</a>
+    <a class="btn" href="/sites/{{$s.ID}}/env">{{template "i-key"}} Environment</a>
     <form method="post" action="/sites/{{$s.ID}}/deploy">
-      <input type="hidden" name="csrf" value="{{.CSRF}}">
-      <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>Deploy now</button>
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>{{template "i-rocket"}} Deploy</button>
     </form>
   </div>
 </div>
 
-<section class="card">
-  <dl class="facts">
-    <div><dt>Repository</dt><dd><a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a></dd></div>
-    <div><dt>Branch</dt><dd><code>{{$s.Branch}}</code></dd></div>
-    <div><dt>PHP</dt><dd>
-      <form method="post" action="/sites/{{$s.ID}}/php" class="inline-form">
-        <input type="hidden" name="csrf" value="{{.CSRF}}">
-        <select name="php" aria-label="PHP version">
-          {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $s.PHPVersion}}selected{{end}}>PHP {{.}}</option>{{end}}
-        </select>
-        <button class="btn small">Save</button>
-      </form>
-    </dd></div>
-    <div><dt>Node.js</dt><dd>
-      <form method="post" action="/sites/{{$s.ID}}/node" class="inline-form">
-        <input type="hidden" name="csrf" value="{{.CSRF}}">
-        <select name="node" aria-label="Node.js version">
-          {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $s.NodeVersion}}selected{{end}}>Node {{.}}</option>{{end}}
-          <option value="" {{if not $s.NodeVersion}}selected{{end}}>None</option>
-        </select>
-        <button class="btn small">Save</button>
-      </form>
-    </dd></div>
-    <div><dt>HTTPS</dt><dd>{{if $s.HTTPS}}<span class="badge badge-active">on</span> <a href="#https">certificate</a>{{else}}<a href="#https">off</a>{{end}}</dd></div>
-    <div><dt>Database</dt><dd>{{with $d.Database}}<a href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}} <span class="badge badge-queued">{{.Status}}</span>{{end}}{{else}}<span class="muted">none (SQLite or .env)</span>{{end}}</dd></div>
-    <div><dt>Last deploy</dt><dd>{{ago $s.DeployedAt}}</dd></div>
-    <div><dt>Path</dt><dd><code>{{$d.Path}}</code></dd></div>
-    <div><dt>Nginx config</dt><dd><code>{{$d.NginxPath}}</code></dd></div>
-  </dl>
-  <p><a href="/sites/{{$s.ID}}/env">Edit environment (.env) →</a></p>
+<div class="grid-2">
+  <section class="card">
+    <div class="card-body stack">
+      <h2>Production</h2>
+      <dl class="facts">
+        <div><dt>Domain</dt><dd>{{if $s.HTTPS}}{{template "i-lock"}}{{else}}{{template "i-globe"}}{{end}}<a href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">{{$s.Domain}}</a></dd></div>
+        <div><dt>Status</dt><dd>{{template "status" $s.Status}}</dd></div>
+        <div><dt>Source</dt><dd>{{template "i-github"}}<a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a></dd></div>
+        <div><dt>Branch</dt><dd>{{template "i-branch"}}<span class="mono">{{$s.Branch}}</span></dd></div>
+        <div><dt>Push to deploy</dt><dd>{{if $s.AutoDeploy}}{{template "i-zap"}} On{{else}}<a href="#autodeploy">Off</a>{{end}}</dd></div>
+        <div><dt>HTTPS</dt><dd>{{if $s.HTTPS}}{{template "i-lock"}} Let's Encrypt{{else}}<a href="#https">Off</a>{{end}}</dd></div>
+      </dl>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-body stack">
+      <h2>Runtime</h2>
+      <dl class="kv">
+        <dt>PHP</dt>
+        <dd>
+          <form method="post" action="/sites/{{$s.ID}}/php" class="inline-form">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <select name="php" aria-label="PHP version">
+              {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $s.PHPVersion}}selected{{end}}>PHP {{.}}</option>{{end}}
+            </select>
+            <button class="btn small">Save</button>
+          </form>
+        </dd>
+        <dt>Node.js</dt>
+        <dd>
+          <form method="post" action="/sites/{{$s.ID}}/node" class="inline-form">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <select name="node" aria-label="Node.js version">
+              {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $s.NodeVersion}}selected{{end}}>Node {{.}}</option>{{end}}
+              <option value="" {{if not $s.NodeVersion}}selected{{end}}>None</option>
+            </select>
+            <button class="btn small">Save</button>
+          </form>
+        </dd>
+        <dt>Database</dt>
+        <dd>{{with $d.Database}}<span class="row">{{template "i-db"}}<a class="link" href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}}{{template "status" .Status}}{{end}}</span>{{else}}<span class="muted">SQLite or set in .env</span>{{end}}</dd>
+        <dt>Directory</dt>
+        <dd><code>{{$d.Path}}</code></dd>
+        <dt>Nginx config</dt>
+        <dd><code>{{$d.NginxPath}}</code></dd>
+      </dl>
+    </div>
+  </section>
+</div>
+
+<section class="section">
+  <div class="section-head"><h2>Deployments</h2></div>
+  {{template "jobs" $d.Jobs}}
 </section>
 
-<h2 class="section-title" id="autodeploy">Push to deploy</h2>
-<section class="card stack">
-{{if $s.AutoDeploy}}
-  <p><span class="badge badge-active">on</span> Every push to <code>{{$s.Branch}}</code> on <a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a> deploys this site automatically.</p>
-  <p class="hint">GitHub sends pushes to <code>{{$d.HookBase}}/hooks/github/{{$s.ID}}</code>. Its delivery history is in the repo's Settings → Webhooks.</p>
-  <form method="post" action="/sites/{{$s.ID}}/autodeploy/disable" data-confirm="Turn off auto-deploy for {{$s.Domain}}? Skiff removes the webhook from GitHub.">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn">Turn off</button>
-  </form>
-{{else if not $d.GitHubConnected}}
-  <p class="muted">Connect GitHub in <a href="/settings">Settings</a> to deploy automatically on every push.</p>
-{{else if not $d.HookBase}}
-  <p class="muted">GitHub needs to reach this panel over HTTPS. Set up <a href="/settings#panel">Settings → Panel address &amp; HTTPS</a> first, then turn this on.</p>
-{{else}}
-  <p>Deploy <code>{{$s.Domain}}</code> automatically every time you push to <code>{{$s.Branch}}</code>. Skiff adds a webhook to <code>{{$s.Repo}}</code> on GitHub; your account needs admin access to the repo.</p>
-  <form method="post" action="/sites/{{$s.ID}}/autodeploy">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn primary">Turn on auto-deploy</button>
-  </form>
-{{end}}
-  <p class="hint">Either way, <strong>Deploy now</strong> always pulls the newest commit of <code>{{$s.Branch}}</code> before building.</p>
+<section class="section" id="autodeploy">
+  <div class="card">
+    <div class="card-body">
+      <div class="card-title-row"><h2>Push to deploy</h2>{{if $s.AutoDeploy}}<span class="status tone-ok"><i></i>On</span>{{end}}</div>
+      {{if $s.AutoDeploy}}
+        <p class="muted">Every push to <code>{{$s.Branch}}</code> on <a href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{$s.Repo}}</a> deploys this site automatically. GitHub sends pushes to <code>{{$d.HookBase}}/hooks/github/{{$s.ID}}</code>.</p>
+      {{else if not $d.GitHubConnected}}
+        <p class="muted">Deploy automatically every time you push. Connect GitHub in <a href="/settings">Settings</a> first.</p>
+      {{else if not $d.HookBase}}
+        <p class="muted">Deploy automatically every time you push. GitHub needs to reach this panel over HTTPS, so set up <a href="/settings#panel">Panel address &amp; HTTPS</a> first.</p>
+      {{else}}
+        <p class="muted">Deploy automatically every time you push to <code>{{$s.Branch}}</code>. Skiff adds a webhook to <code>{{$s.Repo}}</code>; your GitHub account needs admin access to it.</p>
+      {{end}}
+    </div>
+    <div class="card-footer">
+      <span><strong>Deploy</strong> always pulls the newest commit of <code>{{$s.Branch}}</code>.</span>
+      {{if $s.AutoDeploy}}
+      <form method="post" action="/sites/{{$s.ID}}/autodeploy/disable" class="actions" data-confirm="Turn off auto-deploy for {{$s.Domain}}? Skiff removes the webhook from GitHub.">
+        <input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn">Turn off</button>
+      </form>
+      {{else if and $d.GitHubConnected $d.HookBase}}
+      <form method="post" action="/sites/{{$s.ID}}/autodeploy" class="actions">
+        <input type="hidden" name="csrf" value="{{$csrf}}"><button class="btn primary">Turn on</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
 </section>
 
-<h2 class="section-title" id="https">HTTPS</h2>
-<section class="card stack">
-{{if $s.HTTPS}}
-  <p><span class="badge badge-active">secured</span> Served over HTTPS with a Let's Encrypt certificate. HTTP requests redirect to HTTPS.</p>
-  {{with $d.CertExpires}}
-  <p class="muted">Certificate valid until {{.Format "Jan 2, 2006"}} ({{$d.CertDaysLeft}} days). Certbot renews it automatically about 30 days before expiry.</p>
+<section class="section" id="https">
+  <div class="card">
+  {{if $s.HTTPS}}
+    <div class="card-body">
+      <div class="card-title-row"><h2>HTTPS</h2><span class="status tone-ok"><i></i>Secured</span></div>
+      <p class="muted">Served with a Let's Encrypt certificate; HTTP redirects to HTTPS.{{with $d.CertExpires}} Valid until {{.Format "Jan 2, 2006"}} ({{$d.CertDaysLeft}} days), renewed automatically about 30 days before expiry.{{end}}</p>
+    </div>
+    <div class="card-footer">
+      <span>Removing HTTPS resets the site's Nginx config.</span>
+      <form method="post" action="/sites/{{$s.ID}}/https/disable" class="actions"
+            data-confirm="Remove HTTPS from {{$s.Domain}}? This deletes the certificate and resets the site's Nginx config to Skiff's plain-HTTP template (custom Nginx edits are lost).">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <button class="btn" {{if $d.Busy}}disabled{{end}}>Remove HTTPS</button>
+      </form>
+    </div>
+  {{else if not $d.HTTPSEligible}}
+    <div class="card-body">
+      <h2>HTTPS</h2>
+      <p class="muted">{{$d.HTTPSReason}}</p>
+    </div>
+  {{else if not $s.DeployedAt}}
+    <div class="card-body">
+      <h2>HTTPS</h2>
+      <p class="muted">Deploy the site once, then add a free Let's Encrypt certificate here.</p>
+    </div>
+  {{else}}
+    <form method="post" action="/sites/{{$s.ID}}/https">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <div class="card-body stack">
+        <div>
+          <h2>HTTPS</h2>
+          <p class="muted">Get a free Let's Encrypt certificate for <code>{{$s.Domain}}</code>.</p>
+        </div>
+        <ul class="checklist">
+          <li>{{template "i-check"}}<span>The domain's DNS <strong>A record</strong> points at this server.</span></li>
+          <li>{{template "i-check"}}<span>Port <strong>80</strong> is open, so Let's Encrypt can verify the domain.</span></li>
+        </ul>
+        {{if $d.ACMEStaging}}<p class="hint">This panel uses a custom ACME server, so browsers won't trust its certificates.</p>{{end}}
+        <label><span>Email for Let's Encrypt <span class="subtle">(optional)</span></span>
+          <input type="email" name="email" value="{{$d.ACMEEmail}}" autocomplete="email" placeholder="you@example.com">
+        </label>
+      </div>
+      <div class="card-footer">
+        <span>You agree to the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt Subscriber Agreement</a>.</span>
+        <div class="actions"><button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>Enable HTTPS</button></div>
+      </div>
+    </form>
   {{end}}
-  <form method="post" action="/sites/{{$s.ID}}/https/disable"
-        data-confirm="Remove HTTPS from {{$s.Domain}}? This deletes the certificate and resets the site's Nginx config to Skiff's plain-HTTP template (custom Nginx edits are lost).">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn" {{if $d.Busy}}disabled{{end}}>Remove HTTPS</button>
-  </form>
-{{else if not $d.HTTPSEligible}}
-  <p class="muted">{{$d.HTTPSReason}}</p>
-{{else if not $s.DeployedAt}}
-  <p class="muted">Deploy the site once, then you can add a free Let's Encrypt certificate here.</p>
-{{else}}
-  <p>Get a free Let's Encrypt certificate for <code>{{$s.Domain}}</code>. Before you start, make sure:</p>
-  <ul class="checklist">
-    <li>the domain's DNS <strong>A record</strong> points at this server, and</li>
-    <li>port <strong>80</strong> is open (Let's Encrypt connects to it to verify the domain).</li>
-  </ul>
-  {{if $d.ACMEStaging}}<p class="hint">This panel is configured with a custom ACME server, so browsers won't trust the certificates it issues.</p>{{end}}
-  <form method="post" action="/sites/{{$s.ID}}/https" class="stack">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Email for Let's Encrypt <span class="hint">(optional; for important account notices)</span>
-      <input type="email" name="email" value="{{$d.ACMEEmail}}" autocomplete="email" placeholder="you@example.com">
-    </label>
-    <p class="hint">By enabling HTTPS you agree to the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt Subscriber Agreement</a>.</p>
-    <div class="form-actions">
-      <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>Enable HTTPS</button>
+  </div>
+</section>
+
+<section class="section" id="script">
+  <form method="post" action="/sites/{{$s.ID}}/script" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div>
+        <h2>Deploy script</h2>
+        <p class="muted">Runs after Skiff checks out the latest commit of <code>{{$s.Branch}}</code>, with this site's PHP and Node first on <code>PATH</code>. Nginx and PHP-FPM are reloaded afterwards.</p>
+      </div>
+      <textarea name="script" class="code" rows="16" spellcheck="false" aria-label="Deploy script">{{$s.DeployScript}}</textarea>
+    </div>
+    <div class="card-footer">
+      <button class="btn ghost" name="reset" value="1" data-confirm="Replace this script with Skiff's default?">Reset to default</button>
+      <div class="actions"><button class="btn primary">Save</button></div>
     </div>
   </form>
-{{end}}
 </section>
 
-<h2 class="section-title">Deployments</h2>
-{{template "jobs" $d.Jobs}}
-
-<h2 class="section-title" id="script">Deploy script</h2>
-<form method="post" action="/sites/{{$s.ID}}/script" class="card stack">
-  <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <p class="hint">Before this runs, Skiff checks out the latest commit of <code>{{$s.Branch}}</code>. Afterwards it reloads Nginx and PHP-FPM.</p>
-  <textarea name="script" class="code" rows="16" spellcheck="false">{{$s.DeployScript}}</textarea>
-  <div class="form-actions">
-    <button class="btn primary">Save script</button>
-    <button class="btn" name="reset" value="1" data-confirm="Replace this script with Skiff's default?">Reset to default</button>
-  </div>
-</form>
-
-<h2 class="section-title" id="danger">Danger zone</h2>
-<form method="post" action="/sites/{{$s.ID}}/delete" class="card stack danger"
-      data-confirm="Delete {{$s.Domain}}? This removes its files and Nginx config from the server.">
-  <input type="hidden" name="csrf" value="{{.CSRF}}">
-  <p>Deleting removes <code>{{$d.Path}}</code> (including <code>.env</code> and any SQLite database inside it) and the site's Nginx config. Your GitHub repository is untouched.</p>
-  <label>Type <code>{{$s.Domain}}</code> to confirm
-    <input name="confirm" required autocomplete="off" spellcheck="false">
-  </label>
-  <div class="form-actions"><button class="btn danger">Delete site</button></div>
-</form>
+<section class="section" id="danger">
+  <form method="post" action="/sites/{{$s.ID}}/delete" class="card danger"
+        data-confirm="Delete {{$s.Domain}}? This removes its files and Nginx config from the server.">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div>
+        <h2>Delete site</h2>
+        <p class="muted">Removes <code>{{$d.Path}}</code> (including <code>.env</code> and any SQLite database in it), the Nginx config, the certificate and the GitHub webhook. Your repository and MySQL databases are kept.</p>
+      </div>
+      <label>Type <code>{{$s.Domain}}</code> to confirm
+        <input name="confirm" required autocomplete="off" spellcheck="false">
+      </label>
+    </div>
+    <div class="card-footer">
+      <span>This can't be undone.</span>
+      <div class="actions"><button class="btn danger">Delete site</button></div>
+    </div>
+  </form>
+</section>
 {{end}}

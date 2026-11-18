@@ -1,25 +1,32 @@
 {{define "content"}}
-<div class="card auth">
-  <div class="auth-brand"><img src="/static/icon.svg" alt="" width="36" height="36"></div>
-  <h1>Set up Skiff</h1>
-  <p class="muted">Create the admin account for this panel. The setup token was printed to the service log and saved in <code>{{.Data.TokenPath}}</code>.</p>
-  {{with .Data.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
-  <form method="post" action="/setup" class="stack">
-    <label>Setup token
-      <input name="token" value="{{.Data.Token}}" required autocomplete="off" spellcheck="false">
-    </label>
-    <label>Username
-      <input name="username" value="{{.Data.Username}}" required autocomplete="username" autofocus>
-    </label>
-    <label>Password
-      <input type="password" name="password" required minlength="10" autocomplete="new-password">
-      <span class="hint">At least 10 characters.</span>
-    </label>
-    <label>Confirm password
-      <input type="password" name="confirm" required minlength="10" autocomplete="new-password">
-    </label>
-    <button class="btn primary">Create admin account</button>
+<div class="auth">
+  <div class="auth-head">
+    {{template "logo"}}
+    <h1>Set up Skiff</h1>
+    <p>Create the admin account for this server.</p>
+  </div>
+  {{with .Data.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+  <form method="post" action="/setup" class="card">
+    <div class="card-body stack">
+      <label>Setup token
+        <input name="token" value="{{.Data.Token}}" required autocomplete="off" spellcheck="false">
+        <span class="field-hint">Printed by the installer and saved in <code>{{.Data.TokenPath}}</code>.</span>
+      </label>
+      <label>Username
+        <input name="username" value="{{.Data.Username}}" required autocomplete="username" autofocus>
+      </label>
+      <div class="form-grid">
+        <label>Password
+          <input type="password" name="password" required minlength="10" autocomplete="new-password">
+        </label>
+        <label>Confirm
+          <input type="password" name="confirm" required minlength="10" autocomplete="new-password">
+        </label>
+      </div>
+      <span class="field-hint">At least 10 characters.</span>
+      <button class="btn primary">Create account</button>
+    </div>
   </form>
-  <p class="hint">Lost the token? Run <code>sudo cat {{.Data.TokenPath}}</code> on the server.</p>
+  <p class="hint auth-foot">Lost the token? Run <code>sudo cat {{.Data.TokenPath}}</code> on the server.</p>
 </div>
 {{end}}

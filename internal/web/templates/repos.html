@@ -1,42 +1,54 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <h1>Repositories</h1>
-  {{if $d.Connected}}<a class="btn" href="/repos?refresh=1">Refresh</a>{{end}}
+  <div>
+    <h1>Repositories</h1>
+    <p class="page-sub">{{if $d.Connected}}{{len $d.Repos}} repositories from <strong>@{{$d.Login}}</strong> on GitHub.{{else}}Import a Laravel app from GitHub.{{end}}</p>
+  </div>
+  {{if $d.Connected}}<div class="actions"><a class="btn" href="/repos?refresh=1">{{template "i-refresh"}} Refresh</a></div>{{end}}
 </div>
 
-{{with $d.Error}}<div class="flash flash-err">{{.}}</div>{{end}}
+{{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
 
 {{if not $d.Connected}}
-<section class="card empty">
-  <h2>GitHub isn't connected</h2>
-  <p class="muted">Connect a GitHub account to browse and deploy your repositories.</p>
+<div class="empty">
+  <span class="callout-icon">{{template "i-github"}}</span>
+  <h2>Connect GitHub</h2>
+  <p class="muted">Connect a GitHub account to browse your repositories and deploy them in a click, including private ones.</p>
   <a class="btn primary" href="/settings">Connect GitHub</a>
-</section>
+</div>
 {{else}}
-<p class="muted">Signed in as <strong>@{{$d.Login}}</strong> · {{len $d.Repos}} repositories</p>
-<input id="repo-filter" class="filter" type="search" placeholder="Filter repositories…" autocomplete="off">
-<ul class="repo-list">
+<div class="toolbar">
+  <label class="search">{{template "i-search"}}<input id="repo-filter" type="search" placeholder="Search repositories…" autocomplete="off" aria-label="Search repositories"></label>
+</div>
+<div class="card">
+  <ul class="list">
   {{range $d.Repos}}
-  <li class="repo" data-repo="{{.FullName}}">
-    <div class="repo-main">
-      <div class="repo-name">
-        <a href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer">{{.FullName}}</a>
-        {{if .Private}}<span class="badge">private</span>{{end}}
-        {{if .Archived}}<span class="badge">archived</span>{{end}}
+    <li class="list-row hoverable" data-repo="{{.FullName}}">
+      <span class="monogram">{{initial .FullName}}</span>
+      <div class="list-main">
+        <div class="list-title">
+          <a class="truncate" href="{{.HTMLURL}}" target="_blank" rel="noopener noreferrer">{{.FullName}}</a>
+          {{if .Private}}<span class="badge">{{template "i-lock"}} Private</span>{{end}}
+          {{if .Archived}}<span class="badge">Archived</span>{{end}}
+        </div>
+        <div class="list-sub">
+          {{with .Language}}<span class="row"><span class="lang-dot"></span>{{.}}</span>{{end}}
+          <span class="row">{{template "i-branch"}}<span class="mono">{{.DefaultBranch}}</span></span>
+          <span>Pushed {{ago .PushedAt}}</span>
+          {{with .Description}}<span class="truncate">{{.}}</span>{{end}}
+        </div>
       </div>
-      {{with .Description}}<p class="muted repo-desc">{{.}}</p>{{end}}
-      <p class="repo-meta muted">{{with .Language}}{{.}} · {{end}}<code>{{.DefaultBranch}}</code> · pushed {{ago .PushedAt}}</p>
-    </div>
-    <div class="repo-action">
-      {{with index $d.SiteByRepo .FullName}}
-        <a class="btn" href="/sites/{{.}}">View site</a>
-      {{else}}
-        <a class="btn primary" href="/sites/new?repo={{.FullName}}&amp;branch={{.DefaultBranch}}">Deploy</a>
-      {{end}}
-    </div>
-  </li>
+      <div class="list-side">
+        {{with index $d.SiteByRepo .FullName}}
+          <a class="btn small" href="/sites/{{.}}">View site</a>
+        {{else}}
+          <a class="btn small primary" href="/sites/new?repo={{.FullName}}&amp;branch={{.DefaultBranch}}">Deploy</a>
+        {{end}}
+      </div>
+    </li>
   {{end}}
-</ul>
+  </ul>
+</div>
 {{end}}
 {{end}}

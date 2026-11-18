@@ -1,92 +1,125 @@
 {{define "content"}}
 {{$d := .Data}}
-<div class="page-head"><h1>Settings</h1></div>
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="page-sub">How this panel is reached and how it talks to GitHub.</p>
+  </div>
+</div>
 
-<h2 class="section-title" id="panel">Panel address &amp; HTTPS</h2>
-<section class="card stack">
+<section class="card" id="panel">
 {{if $d.PanelBusy}}
-  <p><span class="badge badge-running">working</span> A panel HTTPS change is in progress. <a href="/jobs/{{$d.PanelJobID}}">Watch the log</a></p>
+  <div class="card-body">
+    <h2>Panel address</h2>
+    <p class="row">{{template "status" "running"}} <span>A change is in progress.</span> <a class="link" href="/jobs/{{$d.PanelJobID}}">Watch the log</a></p>
+  </div>
 {{else if $d.PanelDomain}}
-  <p><span class="badge badge-active">secured</span> This panel is served at <a href="https://{{$d.PanelDomain}}"><strong>https://{{$d.PanelDomain}}</strong></a> with a Let's Encrypt certificate that renews automatically.</p>
-  <p class="muted">Visits to <code>http://&lt;server-ip&gt;:{{$d.PanelPort}}</code> redirect there. An SSH tunnel (<code>ssh -L {{$d.PanelPort}}:localhost:{{$d.PanelPort}} root@server</code>) still reaches the panel directly, and <code>sudo skiff reset-panel-domain</code> turns the redirect off if the domain ever stops working.</p>
-  <form method="post" action="/settings/panel/disable"
-        data-confirm="Stop serving the panel at https://{{$d.PanelDomain}}? Its certificate is deleted and the panel goes back to http://<server-ip>:{{$d.PanelPort}}, unencrypted. This page will stop loading once the proxy is removed.">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn">Remove panel domain</button>
-  </form>
+  <div class="card-body stack">
+    <div class="card-title-row"><h2>Panel address</h2><span class="status tone-ok"><i></i>Secured</span></div>
+    <p class="row">{{template "i-lock"}}<a class="link" href="https://{{$d.PanelDomain}}"><strong>https://{{$d.PanelDomain}}</strong></a></p>
+    <p class="muted">Visits to <code>http://&lt;server-ip&gt;:{{$d.PanelPort}}</code> redirect here. An SSH tunnel (<code>ssh -L {{$d.PanelPort}}:localhost:{{$d.PanelPort}} root@server</code>) still reaches the panel directly, and <code>sudo skiff reset-panel-domain</code> turns the redirect off if the domain ever stops working.</p>
+  </div>
+  <div class="card-footer">
+    <span>Certificate from Let's Encrypt, renewed automatically.</span>
+    <form method="post" action="/settings/panel/disable" class="actions"
+          data-confirm="Stop serving the panel at https://{{$d.PanelDomain}}? Its certificate is deleted and the panel goes back to http://<server-ip>:{{$d.PanelPort}}, unencrypted. This page will stop loading once the proxy is removed.">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="btn">Remove domain</button>
+    </form>
+  </div>
 {{else}}
-  {{if $d.FlagURL}}
-  <p class="hint">Skiff was started with <code>--url {{$d.FlagURL}}</code>, so it assumes you handle the panel's address yourself.</p>
-  {{end}}
-  {{if not $d.ViaHTTPS}}
-  <div class="flash flash-err">You're using the panel over plain HTTP, so your password and session travel unencrypted. Give it a domain below.</div>
-  {{end}}
-  {{with $d.PanelFailure}}<p class="muted">The last attempt failed. <a href="/jobs/{{.ID}}">See what happened</a></p>{{end}}
-  <p>Serve this panel at its own domain with a free Let's Encrypt certificate. Nginx terminates HTTPS and forwards to the panel on port {{$d.PanelPort}}.</p>
-  <ul class="checklist">
-    <li>Create a DNS <strong>A record</strong> for the domain (e.g. <code>panel.example.com</code>) pointing at this server.</li>
-    <li>Make sure ports <strong>80</strong> and <strong>443</strong> are open.</li>
-    <li>If you use GitHub, you'll update the OAuth app's callback URL to the new address afterwards.</li>
-  </ul>
-  {{if not $d.Provisioned}}
-  <p class="flash flash-err">Provision the server first (from the Sites page); this uses Nginx.</p>
-  {{else}}
-  <form method="post" action="/settings/panel" class="stack">
+  <form method="post" action="/settings/panel">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Panel domain
-      <input name="domain" required placeholder="panel.example.com" spellcheck="false" autocomplete="off">
-    </label>
-    <label>Email for Let's Encrypt <span class="hint">(optional)</span>
-      <input type="email" name="email" value="{{$d.ACMEEmail}}" autocomplete="email" placeholder="you@example.com">
-    </label>
-    <p class="hint">By continuing you agree to the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt Subscriber Agreement</a>.</p>
-    <div class="form-actions"><button class="btn primary">Secure the panel</button></div>
+    <div class="card-body stack">
+      <div>
+        <h2>Panel address</h2>
+        <p class="muted">Serve this panel at its own domain with a free Let's Encrypt certificate. Nginx terminates HTTPS and forwards to the panel on port {{$d.PanelPort}}.</p>
+      </div>
+      {{if not $d.ViaHTTPS}}{{template "flash" (dict "Kind" "warn" "Msg" "You're using the panel over plain HTTP, so your password and session travel unencrypted. Give it a domain below.")}}{{end}}
+      {{with $d.FlagURL}}<p class="hint">Skiff was started with <code>--url {{.}}</code>, so it assumes you handle the panel's address yourself.</p>{{end}}
+      {{with $d.PanelFailure}}<p class="hint">The last attempt failed. <a href="/jobs/{{.ID}}">See what happened</a>.</p>{{end}}
+      <ul class="checklist">
+        <li>{{template "i-check"}}<span>A DNS <strong>A record</strong> for the domain (e.g. <code>panel.example.com</code>) points at this server.</span></li>
+        <li>{{template "i-check"}}<span>Ports <strong>80</strong> and <strong>443</strong> are open.</span></li>
+        <li>{{template "i-check"}}<span>Afterwards, update your GitHub OAuth app's callback URL to the new address.</span></li>
+      </ul>
+      {{if $d.Provisioned}}
+      <div class="form-grid">
+        <label>Domain
+          <input name="domain" required placeholder="panel.example.com" spellcheck="false" autocomplete="off">
+        </label>
+        <label><span>Email for Let's Encrypt <span class="subtle">(optional)</span></span>
+          <input type="email" name="email" value="{{$d.ACMEEmail}}" autocomplete="email" placeholder="you@example.com">
+        </label>
+      </div>
+      {{end}}
+    </div>
+    <div class="card-footer">
+      {{if $d.Provisioned}}
+      <span>You agree to the <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let's Encrypt Subscriber Agreement</a>.</span>
+      <div class="actions"><button class="btn primary">Secure the panel</button></div>
+      {{else}}
+      <span>Provision the server first (from the Sites page); this uses Nginx.</span>
+      {{end}}
+    </div>
   </form>
-  {{end}}
 {{end}}
 </section>
 
-<h2 class="section-title">GitHub</h2>
-<section class="card stack">
-  {{if $d.Connected}}
-    <p><span class="badge badge-active">connected</span> Signed in as <strong>@{{$d.Login}}</strong>.</p>
-    <div class="form-actions">
+<section class="section card" id="github">
+  <div class="card-body stack">
+    <div class="card-title-row">
+      <h2>GitHub</h2>
+      {{if $d.Connected}}<span class="status tone-ok"><i></i>Connected as @{{$d.Login}}</span>{{end}}
+    </div>
+    {{if $d.Connected}}
+      <p class="muted">Skiff can list your repositories, deploy private ones, and manage push-to-deploy webhooks.</p>
+    {{else if and $d.ClientID $d.SecretSet}}
+      <p class="muted">Your OAuth app is configured. Connect your account to list and deploy repositories.</p>
+    {{else}}
+      <p class="muted">Skiff connects through an OAuth app that you own, so no third party ever sees your code or tokens.</p>
+    {{end}}
+  </div>
+  <div class="card-footer">
+    <span>{{if $d.Connected}}Revoke access any time in GitHub → Settings → Applications.{{else}}Configure the OAuth app below first.{{end}}</span>
+    <div class="actions">
+    {{if $d.Connected}}
       <a class="btn" href="/repos">Browse repositories</a>
       <form method="post" action="/github/disconnect" data-confirm="Disconnect GitHub? Deploys of private repositories will fail until you reconnect.">
-        <input type="hidden" name="csrf" value="{{.CSRF}}">
-        <button class="btn">Disconnect</button>
+        <input type="hidden" name="csrf" value="{{.CSRF}}"><button class="btn">Disconnect</button>
       </form>
+    {{else if and $d.ClientID $d.SecretSet}}
+      <a class="btn primary" href="/github/connect">{{template "i-github"}} Connect GitHub</a>
+    {{end}}
     </div>
-  {{else if and $d.ClientID $d.SecretSet}}
-    <p>Your OAuth app is configured. Connect your GitHub account to list and deploy repositories.</p>
-    <div class="form-actions"><a class="btn primary" href="/github/connect">Connect GitHub</a></div>
-  {{else}}
-    <p>Skiff connects to GitHub through an OAuth app that you own, so no third party ever sees your code or tokens.</p>
-  {{end}}
+  </div>
 </section>
 
-<section class="card stack">
-  <h3>OAuth app</h3>
-  <ol class="steps">
-    <li>Open <a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">GitHub → Settings → Developer settings → New OAuth app</a>.</li>
-    <li>Use any name (e.g. "Skiff on my server") and set:
-      <dl class="facts compact">
-        <div><dt>Homepage URL</dt><dd><code class="copy">{{$d.HomeURL}}</code></dd></div>
-        <div><dt>Authorization callback URL</dt><dd><code class="copy">{{$d.CallbackURL}}</code></dd></div>
-      </dl>
-    </li>
-    <li>Click <em>Register application</em>, then <em>Generate a new client secret</em>, and paste both values below.</li>
-  </ol>
-  <p class="hint">The callback URL must match how you reach this panel exactly (including the port). If you later put the panel behind a domain, update it here and on GitHub.</p>
-  <form method="post" action="/settings/github" class="stack">
+<section class="section">
+  <form method="post" action="/settings/github" class="card">
     <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <label>Client ID
-      <input name="client_id" value="{{$d.ClientID}}" required spellcheck="false" autocomplete="off">
-    </label>
-    <label>Client secret
-      <input type="password" name="client_secret" {{if not $d.SecretSet}}required{{end}} placeholder="{{if $d.SecretSet}}Saved. Leave blank to keep it{{end}}" autocomplete="off">
-    </label>
-    <div class="form-actions"><button class="btn primary">Save</button></div>
+    <div class="card-body stack">
+      <div>
+        <h2>OAuth app</h2>
+        <p class="muted">Create one at <a href="https://github.com/settings/applications/new" target="_blank" rel="noopener noreferrer">GitHub → Developer settings → New OAuth app</a> with these values, then generate a client secret.</p>
+      </div>
+      <dl class="kv">
+        <dt>Homepage URL</dt><dd class="copyable"><code>{{$d.HomeURL}}</code></dd>
+        <dt>Callback URL</dt><dd class="copyable"><code>{{$d.CallbackURL}}</code></dd>
+      </dl>
+      <div class="form-grid">
+        <label>Client ID
+          <input name="client_id" value="{{$d.ClientID}}" required spellcheck="false" autocomplete="off">
+        </label>
+        <label>Client secret
+          <input type="password" name="client_secret" {{if not $d.SecretSet}}required{{end}} placeholder="{{if $d.SecretSet}}Saved, leave blank to keep{{end}}" autocomplete="off">
+        </label>
+      </div>
+    </div>
+    <div class="card-footer">
+      <span>The callback URL must match how you reach this panel exactly.</span>
+      <div class="actions"><button class="btn primary">Save</button></div>
+    </div>
   </form>
 </section>
 {{end}}

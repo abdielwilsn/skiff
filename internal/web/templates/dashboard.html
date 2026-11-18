@@ -1,61 +1,81 @@
 {{define "content"}}
 {{$d := .Data}}
 <div class="page-head">
-  <h1>Sites</h1>
-  <a class="btn primary" href="/sites/new">New site</a>
+  <div>
+    <h1>Sites</h1>
+    <p class="page-sub">Laravel apps deployed on this server.</p>
+  </div>
+  <div class="actions">
+    <a class="btn primary" href="/sites/new">{{template "i-plus"}} New site</a>
+  </div>
 </div>
 
 {{if not $d.Provisioned}}
-<section class="card callout">
-  <h2>Prepare this server</h2>
-  <p>Before deploying Laravel apps, Skiff installs Nginx, PHP {{$d.PHPVersion}} (FPM), Composer and Git, creates the unprivileged <code>skiff</code> user that sites run as, and adds swap on small servers. It takes a few minutes and is safe to re-run.</p>
-  {{with $d.ProvisionJob}}
-    {{if not .Done}}
-      <p><span class="badge badge-running">running</span> Provisioning is in progress. <a href="/jobs/{{.ID}}">Watch the log</a></p>
-    {{else if eq .Status "failed"}}
-      <p><span class="badge badge-failed">failed</span> The last attempt failed. <a href="/jobs/{{.ID}}">See what happened</a></p>
+<section class="card" id="provision">
+  <div class="card-body callout">
+    <span class="callout-icon">{{template "i-server"}}</span>
+    <div class="grow">
+      <h2>Prepare this server</h2>
+      <p class="muted">Skiff installs Nginx, PHP {{$d.PHPVersion}} (FPM), Composer and Git, creates the unprivileged <code>skiff</code> user that sites run as, and adds swap on small servers.</p>
+    </div>
+  </div>
+  <div class="card-footer">
+    {{with $d.ProvisionJob}}
+      {{if not .Done}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">Watch the log</a></span>
+      {{else if eq .Status "failed"}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">See what happened</a></span>
+      {{else}}<span>Takes a few minutes and is safe to re-run.</span>{{end}}
+    {{else}}<span>Takes a few minutes and is safe to re-run.</span>{{end}}
+    {{if or (not $d.ProvisionJob) $d.ProvisionJob.Done}}
+    <form method="post" action="/server/provision" class="actions">
+      <input type="hidden" name="csrf" value="{{.CSRF}}">
+      <button class="btn primary">Provision server</button>
+    </form>
     {{end}}
-  {{end}}
-  {{if or (not $d.ProvisionJob) $d.ProvisionJob.Done}}
-  <form method="post" action="/server/provision">
-    <input type="hidden" name="csrf" value="{{.CSRF}}">
-    <button class="btn primary">Provision server</button>
-  </form>
-  {{end}}
-</section>
-{{end}}
-
-{{if not $d.GitHubLogin}}
-<section class="card callout subtle">
-  <p><strong>Connect GitHub</strong> to pick from your repositories, including private ones. <a href="/settings">Set it up in Settings</a>. Public repositories work without it.</p>
+  </div>
 </section>
 {{end}}
 
 {{if $d.Sites}}
-<div class="table-wrap">
-<table class="table">
-  <thead><tr><th>Domain</th><th>Repository</th><th>Branch</th><th>Status</th><th>Last deploy</th></tr></thead>
-  <tbody>
+<div class="grid-cards">
   {{range $d.Sites}}
-    <tr>
-      <td><a href="/sites/{{.ID}}"><strong>{{.Domain}}</strong></a>{{if .HTTPS}} <span class="badge badge-active" title="HTTPS enabled">https</span>{{end}}{{if .AutoDeploy}} <span class="badge" title="Deploys on every push to {{.Branch}}">auto</span>{{end}}</td>
-      <td>{{.Repo}}</td>
-      <td><code>{{.Branch}}</code></td>
-      <td><span class="badge badge-{{.Status}}">{{.Status}}</span></td>
-      <td class="muted">{{ago .DeployedAt}}</td>
-    </tr>
+  <a class="card site-card" href="/sites/{{.ID}}">
+    <div class="site-card-head">
+      <span class="monogram">{{initial .Domain}}</span>
+      <div class="site-card-title">
+        <strong>{{.Domain}}</strong>
+        <span>{{.Scheme}}://{{.Domain}}</span>
+      </div>
+    </div>
+    <div class="site-card-meta">
+      <span class="meta">{{template "i-github"}} {{.Repo}}</span>
+    </div>
+    <div class="site-card-meta">
+      <span class="meta">{{template "i-branch"}} <span class="mono">{{.Branch}}</span></span>
+      {{if .HTTPS}}<span class="meta">{{template "i-lock"}} HTTPS</span>{{end}}
+      {{if .AutoDeploy}}<span class="meta" title="Deploys on every push to {{.Branch}}">{{template "i-zap"}} Auto-deploy</span>{{end}}
+    </div>
+    <div class="site-card-foot">
+      {{template "status" .Status}}
+      <span>{{if .DeployedAt}}{{ago .DeployedAt}}{{else}}never deployed{{end}}</span>
+    </div>
+  </a>
   {{end}}
-  </tbody>
-</table>
 </div>
 {{else}}
-<section class="card empty">
-  <h2>No sites yet</h2>
-  <p class="muted">Pick a Laravel repository and a domain. Skiff clones it, installs dependencies, and serves it with Nginx.</p>
-  <a class="btn primary" href="/sites/new">Deploy your first app</a>
-</section>
+<div class="empty">
+  <span class="callout-icon">{{template "i-rocket"}}</span>
+  <h2>Deploy your first app</h2>
+  <p class="muted">Pick a Laravel repository and a domain. Skiff clones it, installs dependencies, builds assets and serves it with Nginx.</p>
+  <a class="btn primary" href="/sites/new">{{template "i-plus"}} New site</a>
+</div>
 {{end}}
 
-<h2 class="section-title">Recent activity</h2>
-{{template "jobs" $d.Jobs}}
+{{if not $d.GitHubLogin}}
+<p class="hint section"><a href="/settings">Connect GitHub</a> to pick from your repositories, including private ones. Public repositories work without it.</p>
+{{end}}
+
+<section class="section">
+  <div class="section-head"><h2>Recent activity</h2></div>
+  {{template "jobs" $d.Jobs}}
+</section>
 {{end}}

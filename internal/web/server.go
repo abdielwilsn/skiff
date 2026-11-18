@@ -259,6 +259,7 @@ func (s *Server) needsSetup() bool {
 type flash struct{ Kind, Msg string }
 
 type page struct {
+	Host    string // the panel's host name, shown in the header
 	Title   string
 	Nav     string
 	User    string
@@ -270,7 +271,23 @@ type page struct {
 }
 
 func (s *Server) loadTemplates() error {
-	funcs := template.FuncMap{"ago": ago}
+	funcs := template.FuncMap{
+		"ago":         ago,
+		"initial":     initial,
+		"statusLabel": func(s string) string { return statusOf(s).label },
+		"statusTone":  func(s string) string { return statusOf(s).tone },
+		"statusPulse": func(s string) bool { return statusOf(s).pulse },
+		// dict builds a map for passing several values to a partial.
+		"dict": func(kv ...any) map[string]any {
+			m := make(map[string]any, len(kv)/2)
+			for i := 0; i+1 < len(kv); i += 2 {
+				if k, ok := kv[i].(string); ok {
+					m[k] = kv[i+1]
+				}
+			}
+			return m
+		},
+	}
 	s.pages = map[string]*template.Template{}
 	names, err := fs.Glob(assets, "templates/*.html")
 	if err != nil {
@@ -303,6 +320,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, sta
 		http.SetCookie(w, &http.Cookie{Name: "skiff_flash", Path: "/", MaxAge: -1})
 	}
 	p.DryRun = s.cfg.DryRun
+	p.Host = r.Host
+	if h, _, err := net.SplitHostPort(r.Host); err == nil {
+		p.Host = h
+	}
 	p.Version = s.cfg.Version
 	t, ok := s.pages[name]
 	if !ok {
@@ -337,6 +358,46 @@ func randomHex(n int) string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+type statusStyle struct {
+	label, tone string // tone: ok | info | warn | err | neutral
+	pulse       bool
+}
+
+// statusOf maps site, job and database statuses to how they're shown.
+func statusOf(s string) statusStyle {
+	switch s {
+	case store.SiteActive, store.DBReady:
+		return statusStyle{"Ready", "ok", false}
+	case store.JobSuccess:
+		return statusStyle{"Succeeded", "ok", false}
+	case store.SiteDeploying:
+		return statusStyle{"Building", "info", true}
+	case store.JobRunning:
+		return statusStyle{"Running", "info", true}
+	case store.JobQueued:
+		return statusStyle{"Queued", "neutral", false}
+	case store.DBPending:
+		return statusStyle{"Pending", "neutral", false}
+	case store.SiteNew:
+		return statusStyle{"Not deployed", "neutral", false}
+	case store.SiteDeleting:
+		return statusStyle{"Deleting", "warn", true}
+	case store.JobFailed:
+		return statusStyle{"Failed", "err", false}
+	}
+	return statusStyle{s, "neutral", false}
+}
+
+// initial returns the first letter or digit of s, for monogram avatars.
+func initial(s string) string {
+	for _, r := range s {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			return strings.ToUpper(string(r))
+		}
+	}
+	return "?"
 }
 
 func ago(v any) string {
