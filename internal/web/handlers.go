@@ -231,7 +231,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 					return
 				}
 			}
-			jobID, err := s.startDeploy(site)
+			jobID, err := s.startDeploy(site, "")
 			if err != nil {
 				s.serverError(w, err)
 				return
@@ -245,13 +245,19 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 	s.render(w, r, "site_new", http.StatusUnprocessableEntity, pageFor(sess, "New site", "sites", d))
 }
 
-func (s *Server) startDeploy(site store.Site) (int64, error) {
+// startDeploy queues a deploy. reason (optional) is shown in the job title,
+// e.g. "push a1b2c3d by abdiel".
+func (s *Server) startDeploy(site store.Site, reason string) (int64, error) {
 	if err := s.st.SetSiteStatus(site.ID, store.SiteDeploying); err != nil {
 		return 0, err
 	}
 	siteID := site.ID
 	var pendingDB int64 // database created by this deploy, if any
-	return s.runner.Enqueue(&siteID, "deploy", "Deploy "+site.Domain,
+	title := "Deploy " + site.Domain
+	if reason != "" {
+		title += " (" + reason + ")"
+	}
+	return s.runner.Enqueue(&siteID, "deploy", title,
 		func(ctx context.Context, log io.Writer) error {
 			// Reload at run time: the deploy script may have changed while queued.
 			cur, err := s.st.Site(siteID)
@@ -329,6 +335,9 @@ type siteData struct {
 	PHPVersions  []string
 	NodeVersions []string
 
+	HookBase        string // public HTTPS origin for webhooks; "" = not available
+	GitHubConnected bool
+
 	HTTPSEligible bool
 	HTTPSReason   string // why HTTPS isn't possible, when not eligible
 	CertExpires   *time.Time
@@ -350,6 +359,8 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	}
 	d.PHPVersions = laravel.PHPVersions
 	d.NodeVersions = laravel.NodeVersions
+	d.HookBase = s.publicHTTPSBase()
+	d.GitHubConnected = s.githubToken() != ""
 	d.HTTPSEligible, d.HTTPSReason = laravel.HTTPSEligible(site.Domain)
 	d.ACMEEmail, _ = s.st.Setting(keyACMEEmail)
 	d.ACMEStaging = s.cfg.ACMEServer != ""
@@ -459,7 +470,7 @@ func (s *Server) deploySite(w http.ResponseWriter, r *http.Request, _ store.Sess
 		redirect(w, r, s.siteURL(site))
 		return
 	}
-	id, err := s.startDeploy(site)
+	id, err := s.startDeploy(site, "")
 	if err != nil {
 		s.serverError(w, err)
 		return
@@ -596,7 +607,17 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request, _ store.Sess
 	}
 	siteID := site.ID
 	id, err := s.runner.Enqueue(&siteID, "delete", "Delete "+site.Domain,
-		func(ctx context.Context, log io.Writer) error { return s.deployer.Delete(ctx, log, site) },
+		func(ctx context.Context, log io.Writer) error {
+			if site.HookID != 0 {
+				fmt.Fprintln(log, "\n==> Removing the GitHub webhook")
+				if err := s.removeWebhook(ctx, site); err != nil {
+					fmt.Fprintf(log, "Couldn't remove it (%v); delete it in the repo's Settings → Webhooks.\n", err)
+				} else {
+					fmt.Fprintln(log, "Removed")
+				}
+			}
+			return s.deployer.Delete(ctx, log, site)
+		},
 		func(err error) {
 			if err != nil {
 				_ = s.st.SetSiteStatus(siteID, store.SiteFailed)
