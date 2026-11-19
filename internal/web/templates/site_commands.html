@@ -1,0 +1,54 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$s := $d.Site}}
+<div class="crumbs"><a href="/">Sites</a><span>/</span><a href="/sites/{{$s.ID}}">{{$s.Domain}}</a><span>/</span><span>Commands</span></div>
+<div class="page-head">
+  <div>
+    <h1>Commands</h1>
+    <p class="page-sub">Run Artisan or shell commands in <code>{{$d.Site.Domain}}</code>'s directory, as the site user, with PHP {{$s.PHPVersion}}{{with $s.NodeVersion}} and Node {{.}}{{end}}.</p>
+  </div>
+</div>
+
+{{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+
+<form method="post" action="/sites/{{$s.ID}}/commands" class="card" id="command-form">
+  <input type="hidden" name="csrf" value="{{.CSRF}}">
+  <div class="card-body stack">
+    <div class="presets" role="group" aria-label="Common commands">
+      {{range $d.Presets}}<button type="button" class="chip{{if .Danger}} chip-danger{{end}}" data-command="{{.Command}}">{{.Label}}</button>{{end}}
+    </div>
+    <label class="terminal-input">
+      <span class="prompt" aria-hidden="true">$</span>
+      <textarea id="command" name="command" rows="3" spellcheck="false" autocomplete="off" required placeholder="php artisan migrate --force" aria-label="Command to run">{{$d.Command}}</textarea>
+    </label>
+  </div>
+  <div class="card-footer">
+    <span>Runs non-interactively: prompts get "no", so add <code>--force</code> where Artisan asks for it. <kbd>⌘</kbd>/<kbd>Ctrl</kbd> + <kbd>Enter</kbd> runs.</span>
+    <div class="actions"><button class="btn primary">{{template "i-arrow"}} Run</button></div>
+  </div>
+</form>
+
+<section class="section">
+  <div class="section-head"><h2>History</h2></div>
+  <div class="card">
+  {{if $d.History}}
+    <ul class="list">
+    {{range $d.History}}
+      <li class="list-row">
+        <div class="list-main">
+          <div class="list-title"><a class="truncate mono" href="/jobs/{{.ID}}">{{.Detail}}</a></div>
+          <div class="list-sub">{{template "status" .Status}}<span>{{ago .CreatedAt}}</span>{{with .Duration}}<span class="mono">{{.}}</span>{{end}}</div>
+        </div>
+        <div class="list-side">
+          <button type="button" class="btn small" data-command="{{.Detail}}">Use again</button>
+          <a class="btn small ghost" href="/jobs/{{.ID}}">Output</a>
+        </div>
+      </li>
+    {{end}}
+    </ul>
+  {{else}}
+    <div class="list-empty">No commands run yet.</div>
+  {{end}}
+  </div>
+</section>
+{{end}}

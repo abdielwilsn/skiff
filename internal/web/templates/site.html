@@ -14,6 +14,7 @@
   <div class="actions">
     <a class="btn" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">Visit {{template "i-external"}}</a>
     <a class="btn" href="/sites/{{$s.ID}}/env">{{template "i-key"}} Environment</a>
+    <a class="btn" href="/sites/{{$s.ID}}/commands">{{template "i-terminal"}} Commands</a>
     <form method="post" action="/sites/{{$s.ID}}/deploy">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>{{template "i-rocket"}} Deploy</button>
@@ -73,7 +74,7 @@
 </div>
 
 <section class="section">
-  <div class="section-head"><h2>Deployments</h2></div>
+  <div class="section-head"><h2>Activity</h2><a class="link small" href="/sites/{{$s.ID}}/commands">Run a command</a></div>
   {{template "jobs" $d.Jobs}}
 </section>
 
