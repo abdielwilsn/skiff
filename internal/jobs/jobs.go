@@ -48,7 +48,12 @@ func NewRunner(ctx context.Context, st *store.Store, logDir string) *Runner {
 // Enqueue records a job and schedules it. done (optional) is called with the
 // job's result before its final status is saved.
 func (r *Runner) Enqueue(siteID *int64, kind, title string, fn Func, done func(error)) (int64, error) {
-	id, err := r.store.CreateJob(siteID, kind, title)
+	return r.EnqueueDetail(siteID, kind, title, "", fn, done)
+}
+
+// EnqueueDetail is Enqueue with extra text stored on the job (shown in history).
+func (r *Runner) EnqueueDetail(siteID *int64, kind, title, detail string, fn Func, done func(error)) (int64, error) {
+	id, err := r.store.CreateJob(siteID, kind, title, detail)
 	if err != nil {
 		return 0, err
 	}

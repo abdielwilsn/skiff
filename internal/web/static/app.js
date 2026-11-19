@@ -63,6 +63,31 @@
     poll();
   }
 
+  // Commands page: presets / history fill the box; risky commands confirm;
+  // Cmd/Ctrl+Enter runs.
+  var cmdBox = document.getElementById("command");
+  if (cmdBox) {
+    document.querySelectorAll("[data-command]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        cmdBox.value = b.getAttribute("data-command");
+        cmdBox.focus();
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      });
+    });
+    var risky = /migrate:(fresh|reset|refresh|rollback)|db:wipe|\brm\s+-[a-z]*r|drop\s+(table|database)/i;
+    document.getElementById("command-form").addEventListener("submit", function (e) {
+      if (risky.test(cmdBox.value) && !window.confirm("This command can delete data:\n\n" + cmdBox.value + "\n\nRun it?")) {
+        e.preventDefault();
+      }
+    });
+    cmdBox.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        document.getElementById("command-form").requestSubmit();
+      }
+    });
+  }
+
   // Client-side repository filter.
   var filter = document.getElementById("repo-filter");
   if (filter) {

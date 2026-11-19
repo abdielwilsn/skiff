@@ -78,6 +78,25 @@ a deploy; the job title shows the commit and who pushed it.
   every deploy fetches the latest commit.
 - Turning auto-deploy off, or deleting the site, removes the webhook.
 
+## Running commands
+
+Each site has a **Commands** page (button on the site page) for one-off
+commands, like Laravel Cloud's: a text box plus one-click presets for
+`migrate`, `migrate:status`, `db:seed`, `queue:restart`, `optimize:clear`,
+`storage:link` and more. Commands:
+
+- run in the site's directory as the unprivileged `skiff` user, with the site's
+  PHP and Node.js first on `PATH` (the same environment as the deploy script);
+- can span several lines (they run as a bash script and stop at the first
+  failure);
+- run non-interactively: prompts get their default answer, so pass `--force`
+  where Artisan asks for it in production;
+- stream their output live, like deploys, and are kept in a per-site history
+  with **Use again**.
+
+Destructive commands (`migrate:fresh`, `db:wipe`, `rm -rf` …) ask for
+confirmation first.
+
 ## PHP versions
 
 Each site picks its PHP version (8.2, 8.3, 8.4 or 8.5; new sites default to

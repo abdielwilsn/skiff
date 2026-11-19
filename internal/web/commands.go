@@ -1,0 +1,99 @@
+package web
+
+import (
+	"context"
+	"io"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"skiff/internal/laravel"
+	"skiff/internal/store"
+)
+
+// commandPreset is a one-click command on the Commands page.
+type commandPreset struct {
+	Label, Command string
+	Danger         bool // destroys data; the page asks for confirmation
+}
+
+var commandPresets = []commandPreset{
+	{"Migrate", "php artisan migrate --force", false},
+	{"Migration status", "php artisan migrate:status", false},
+	{"Seed", "php artisan db:seed --force", false},
+	{"Rollback last batch", "php artisan migrate:rollback --force", true},
+	{"Fresh + seed", "php artisan migrate:fresh --seed --force", true},
+	{"Restart queue workers", "php artisan queue:restart", false},
+	{"Clear caches", "php artisan optimize:clear", false},
+	{"Re-cache", "php artisan optimize", false},
+	{"Storage link", "php artisan storage:link", false},
+	{"About", "php artisan about", false},
+}
+
+type commandsData struct {
+	Site    store.Site
+	Presets []commandPreset
+	History []store.Job
+	Command string
+	Error   string
+}
+
+func (s *Server) commandsPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	d := commandsData{Site: site, Presets: commandPresets, Command: r.URL.Query().Get("command")}
+	d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
+	s.render(w, r, "site_commands", http.StatusOK, pageFor(sess, site.Domain+" · Commands", "sites", d))
+}
+
+func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	command := strings.TrimSpace(strings.ReplaceAll(r.FormValue("command"), "\r\n", "\n"))
+	fail := func(msg string) {
+		d := commandsData{Site: site, Presets: commandPresets, Command: command, Error: msg}
+		d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
+		s.render(w, r, "site_commands", http.StatusUnprocessableEntity, pageFor(sess, site.Domain+" · Commands", "sites", d))
+	}
+	switch {
+	case command == "":
+		fail("Enter a command to run.")
+		return
+	case len(command) > laravel.MaxCommandLen:
+		fail("That command is too long.")
+		return
+	case site.DeployedAt == nil:
+		fail("Deploy the site once before running commands in it.")
+		return
+	}
+	siteID := site.ID
+	id, err := s.runner.EnqueueDetail(&siteID, "command", "Run "+commandTitle(command), command,
+		func(ctx context.Context, log io.Writer) error {
+			cur, err := s.st.Site(siteID) // current PHP/Node versions
+			if err != nil {
+				return err
+			}
+			return s.deployer.RunCommand(ctx, log, cur, command)
+		}, nil)
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	redirect(w, r, "/jobs/"+strconv.FormatInt(id, 10))
+}
+
+// commandTitle is a one-line, length-limited label for a command.
+func commandTitle(command string) string {
+	first, _, multi := strings.Cut(command, "\n")
+	first = strings.TrimSpace(first)
+	if len(first) > 72 {
+		first = first[:69] + "…"
+	} else if multi {
+		first += " …"
+	}
+	return first
+}

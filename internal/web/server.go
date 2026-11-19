@@ -173,6 +173,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sites/{id}/env", s.auth(s.envPage))
 	m.HandleFunc("POST /sites/{id}/env", s.auth(s.saveEnv))
 	m.HandleFunc("POST /sites/{id}/delete", s.auth(s.deleteSite))
+	m.HandleFunc("GET /sites/{id}/commands", s.auth(s.commandsPage))
+	m.HandleFunc("POST /sites/{id}/commands", s.auth(s.runCommand))
 	m.HandleFunc("POST /sites/{id}/https", s.auth(s.enableHTTPS))
 	m.HandleFunc("POST /sites/{id}/https/disable", s.auth(s.disableHTTPS))
 

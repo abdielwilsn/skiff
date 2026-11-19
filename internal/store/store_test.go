@@ -152,7 +152,7 @@ func TestSitesAndJobs(t *testing.T) {
 	if _, err := s.CreateSite(Site{Domain: "a.test", Repo: "o/r", Branch: "main", PHPVersion: "8.3"}); !errors.Is(err, ErrDuplicate) {
 		t.Fatalf("duplicate domain: got %v", err)
 	}
-	jobID, err := s.CreateJob(&id, "deploy", "Deploy a.test")
+	jobID, err := s.CreateJob(&id, "deploy", "Deploy a.test", "")
 	if err != nil {
 		t.Fatal(err)
 	}

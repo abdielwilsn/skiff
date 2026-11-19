@@ -54,6 +54,7 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN auto_deploy INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sites ADD COLUMN hook_secret TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE sites ADD COLUMN hook_id INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE jobs ADD COLUMN detail TEXT NOT NULL DEFAULT ''`,
 }
 
 const schemaV1 = `
@@ -528,6 +529,7 @@ type Job struct {
 	SiteID     *int64
 	Kind       string
 	Title      string
+	Detail     string // e.g. the full command a "command" job ran
 	Status     string
 	CreatedAt  time.Time
 	StartedAt  *time.Time
@@ -548,13 +550,13 @@ func (j Job) Duration() string {
 	return end.Sub(*j.StartedAt).Round(time.Second).String()
 }
 
-const jobCols = `id, site_id, kind, title, status, created_at, started_at, finished_at`
+const jobCols = `id, site_id, kind, title, detail, status, created_at, started_at, finished_at`
 
 func scanJob(row scanner) (Job, error) {
 	var j Job
 	var site, started, finished sql.NullInt64
 	var created int64
-	err := row.Scan(&j.ID, &site, &j.Kind, &j.Title, &j.Status, &created, &started, &finished)
+	err := row.Scan(&j.ID, &site, &j.Kind, &j.Title, &j.Detail, &j.Status, &created, &started, &finished)
 	if errors.Is(err, sql.ErrNoRows) {
 		return j, ErrNotFound
 	}
@@ -585,9 +587,9 @@ func (s *Store) queryJobs(q string, args ...any) ([]Job, error) {
 	return out, rows.Err()
 }
 
-func (s *Store) CreateJob(siteID *int64, kind, title string) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO jobs(site_id, kind, title, status, created_at) VALUES(?,?,?,?,?)`,
-		siteID, kind, title, JobQueued, now())
+func (s *Store) CreateJob(siteID *int64, kind, title, detail string) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO jobs(site_id, kind, title, detail, status, created_at) VALUES(?,?,?,?,?,?)`,
+		siteID, kind, title, detail, JobQueued, now())
 	if err != nil {
 		return 0, err
 	}
@@ -600,6 +602,11 @@ func (s *Store) Job(id int64) (Job, error) {
 
 func (s *Store) RecentJobs(limit int) ([]Job, error) {
 	return s.queryJobs(`SELECT `+jobCols+` FROM jobs ORDER BY id DESC LIMIT ?`, limit)
+}
+
+// SiteJobsOfKind lists a site's most recent jobs of one kind, e.g. "command".
+func (s *Store) SiteJobsOfKind(siteID int64, kind string, limit int) ([]Job, error) {
+	return s.queryJobs(`SELECT `+jobCols+` FROM jobs WHERE site_id = ? AND kind = ? ORDER BY id DESC LIMIT ?`, siteID, kind, limit)
 }
 
 func (s *Store) SiteJobs(siteID int64, limit int) ([]Job, error) {
