@@ -65,3 +65,22 @@ func TestDeployUsesSitePHP(t *testing.T) {
 		t.Error("new Nginx config should use the site's PHP socket")
 	}
 }
+
+func TestNginxHeaderBuffers(t *testing.T) {
+	cfg := NginxConfig(store.Site{Domain: "app.example.com", PHPVersion: "8.4"})
+	for _, want := range []string{"fastcgi_buffer_size 64k;", "fastcgi_buffers 16 32k;"} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("new site config missing %q (large Laravel headers would 502)", want)
+		}
+	}
+	rec := &recorder{}
+	d := &Deployer{Exec: rec}
+	site := store.Site{Domain: "app.example.com", Repo: "o/r", Branch: "main", PHPVersion: "8.4", DeployScript: "true\n"}
+	if err := d.Deploy(context.Background(), &bytes.Buffer{}, site, "", nil); err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(rec.scripts, "\n")
+	if !strings.Contains(all, "if ! grep -q 'fastcgi_buffer_size'") || !strings.Contains(all, `\1fastcgi_buffers 16 32k;`) {
+		t.Error("deploys must add the buffers to existing site configs that lack them")
+	}
+}
