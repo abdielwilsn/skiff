@@ -227,6 +227,10 @@ server {
         fastcgi_param SCRIPT_FILENAME $realpath_root$fastcgi_script_name;
         include fastcgi_params;
         fastcgi_hide_header X-Powered-By;
+        # Laravel can send large headers (Vite preload Link headers, cookies);
+        # Nginx's 4-8k default turns those into 502 "too big header".
+        fastcgi_buffer_size 64k;
+        fastcgi_buffers 16 32k;
     }
 
     location ~ /\.(?!well-known).* {
@@ -333,6 +337,10 @@ echo "OK"`, site.Domain)
 else
     echo "Keeping existing %[1]s"
     sed -i -E 's#unix:/run/php/php[0-9.]+-fpm-%[4]s\.sock#unix:%[5]s#' %[1]s
+    if ! grep -q 'fastcgi_buffer_size' %[1]s; then
+        sed -i 's#^\([[:space:]]*\)fastcgi_hide_header X-Powered-By;#&\n\1fastcgi_buffer_size 64k;\n\1fastcgi_buffers 16 32k;#' %[1]s
+        echo "Added larger FastCGI header buffers"
+    fi
 fi
 ln -sfn %[1]s %[2]s
 nginx -t
