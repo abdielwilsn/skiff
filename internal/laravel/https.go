@@ -197,14 +197,14 @@ fi`, shell.Quote(domain))
 // setAppURLScheme rewrites APP_URL only if it is exactly from://domain, so a
 // custom APP_URL is left alone.
 func (d *Deployer) setAppURLScheme(ctx context.Context, w io.Writer, site store.Site, from, to string) error {
-	script := fmt.Sprintf(`cd %[1]s 2>/dev/null || { echo "Site directory missing; skipping."; exit 0; }
-if [ -f .env ] && grep -q '^APP_URL=%[2]s://%[4]s/\?$' .env; then
-    sed -i 's|^APP_URL=%[2]s://%[4]s/\?$|APP_URL=%[3]s://%[5]s|' .env
-    echo "APP_URL=%[3]s://%[5]s"
-    if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi
+	script := locate(site.Domain) + fmt.Sprintf(`[ -d "$SITE" ] || { echo "Site directory missing; skipping."; exit 0; }
+if [ -f "$ENVF" ] && grep -q '^APP_URL=%[1]s://%[3]s/\?$' "$ENVF"; then
+    sed -i 's|^APP_URL=%[1]s://%[3]s/\?$|APP_URL=%[2]s://%[4]s|' "$ENVF"
+    echo "APP_URL=%[2]s://%[4]s"
+    if [ -f "$APP/bootstrap/cache/config.php" ]; then cd "$APP" && php artisan config:cache; fi
 else
     echo "APP_URL is customised or missing; left unchanged."
-fi`, shell.Quote(SitePath(site.Domain)), from, to, strings.ReplaceAll(site.Domain, ".", `\.`), site.Domain)
+fi`, from, to, strings.ReplaceAll(site.Domain, ".", `\.`), site.Domain)
 	return d.run(ctx, w, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser})
 }
 

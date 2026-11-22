@@ -41,7 +41,9 @@ func TestRunCommand(t *testing.T) {
 		t.Error("stdin must be empty so prompts can't hang the job")
 	}
 	for _, want := range []string{
-		"cd '/home/skiff/app.example.com'",
+		"SITE='/home/skiff/app.example.com'",
+		`if [ -e "$SITE/current" ]; then APP="$SITE/current"`,
+		`cd "$APP"`,
 		"set -eo pipefail",
 		"export PATH=/opt/skiff/php/8.4:$PATH",
 		"export PATH=/opt/skiff/node/24/bin:$PATH",

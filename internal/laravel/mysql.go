@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"skiff/internal/executor"
-	"skiff/internal/shell"
 	"skiff/internal/store"
 )
 
@@ -196,18 +195,18 @@ func (d *Deployer) WriteDatabaseEnv(ctx context.Context, w io.Writer, site store
 		return err
 	}
 	step(w, "Pointing %s's .env at MySQL database %s", site.Domain, spec.Name)
-	script := fmt.Sprintf(`cd %s
-set_env() {
-    if grep -qE "^$1=" .env; then
-        sed -i "s|^$1=.*|$1=$2|" .env
-    elif grep -qE "^# *$1=" .env; then
-        sed -i "s|^# *$1=.*|$1=$2|" .env
+	script := locate(site.Domain) + fmt.Sprintf(`set_env() {
+    if grep -qE "^$1=" "$ENVF"; then
+        sed -i "s|^$1=.*|$1=$2|" "$ENVF"
+    elif grep -qE "^# *$1=" "$ENVF"; then
+        sed -i "s|^# *$1=.*|$1=$2|" "$ENVF"
     else
-        printf '%%s=%%s\n' "$1" "$2" >> .env
+        printf '%%s=%%s\n' "$1" "$2" >> "$ENVF"
     fi
 }
-touch .env
-chmod 640 .env
+mkdir -p "$(dirname "$ENVF")"
+touch "$ENVF"
+chmod 640 "$ENVF"
 set_env DB_CONNECTION mysql
 set_env DB_HOST 127.0.0.1
 set_env DB_PORT 3306
@@ -215,8 +214,8 @@ set_env DB_DATABASE %s
 set_env DB_USERNAME %s
 set_env DB_PASSWORD "$SKIFF_DB_PASSWORD"
 echo "DB_CONNECTION=mysql, DB_DATABASE=%s, DB_USERNAME=%s"
-if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi`,
-		shell.Quote(SitePath(site.Domain)), spec.Name, spec.User, spec.Name, spec.User)
+if [ -f "$APP/bootstrap/cache/config.php" ]; then cd "$APP" && php artisan config:cache; fi`,
+		spec.Name, spec.User, spec.Name, spec.User)
 	// The password is passed in the environment, not the script, so it isn't logged.
 	opt := executor.Options{User: SiteUser, Env: []string{"SKIFF_DB_PASSWORD=" + spec.Password}}
 	if err := d.run(ctx, w, withPHP(site.PHPVersion, script), opt); err != nil {
@@ -228,10 +227,11 @@ if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi`,
 // Migrate runs the site's migrations, if it has been deployed.
 func (d *Deployer) Migrate(ctx context.Context, w io.Writer, site store.Site) error {
 	step(w, "Running migrations")
-	script := `if [ -f artisan ] && [ -d vendor ]; then
+	script := locate(site.Domain) + `cd "$APP" 2>/dev/null || true
+if [ -f artisan ] && [ -d vendor ]; then
     php artisan migrate --force
 else
     echo "Site isn't fully deployed yet; migrations will run on the next deploy."
 fi`
-	return d.run(ctx, w, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser, Dir: SitePath(site.Domain)})
+	return d.run(ctx, w, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser})
 }

@@ -162,6 +162,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sites", s.auth(s.createSite))
 	m.HandleFunc("GET /sites/{id}", s.auth(s.sitePage))
 	m.HandleFunc("POST /sites/{id}/deploy", s.auth(s.deploySite))
+	m.HandleFunc("POST /sites/{id}/rollback", s.auth(s.rollback))
 	m.HandleFunc("POST /sites/{id}/script", s.auth(s.saveScript))
 	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
 	m.HandleFunc("POST /sites/{id}/node", s.auth(s.setNode))

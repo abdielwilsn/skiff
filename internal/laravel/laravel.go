@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"skiff/internal/executor"
-	"skiff/internal/github"
 	"skiff/internal/shell"
 	"skiff/internal/store"
 )
@@ -242,116 +241,9 @@ server {
 func NginxConfig(site store.Site) string {
 	return strings.NewReplacer(
 		"{{DOMAIN}}", site.Domain,
-		"{{ROOT}}", SitePath(site.Domain)+"/public",
+		"{{ROOT}}", SitePath(site.Domain)+"/current/public",
 		"{{SOCKET}}", fpmSocket(site.PHPVersion),
 	).Replace(nginxTemplate)
-}
-
-// Deploy fetches the site's branch, prepares .env, runs the deploy script and
-// makes sure Nginx serves it. token may be empty for public repositories.
-// If db is non-nil, the MySQL database is created and written into .env
-// before the deploy script runs (used on a site's first deploy).
-func (d *Deployer) Deploy(ctx context.Context, w io.Writer, site store.Site, token string, db *DBSpec) error {
-	q := shell.Quote
-	dir := SitePath(site.Domain)
-
-	// 1. Code. Only this step sees the GitHub token; the deploy script (and
-	// composer packages it runs) never do.
-	step(w, "Fetching %s (%s)", site.Repo, site.Branch)
-	fetch := fmt.Sprintf(`if [ -d %[1]s/.git ]; then
-    git -C %[1]s fetch --depth=1 origin %[2]s
-    git -C %[1]s reset --hard FETCH_HEAD
-else
-    git clone --depth=1 --single-branch --branch %[2]s %[3]s %[1]s
-fi
-git -C %[1]s log -1 --format='Commit %%h: %%s (%%an, %%cr)'`, q(dir), q(site.Branch), q(github.CloneURL(site.Repo)))
-	if err := d.run(ctx, w, fetch, executor.Options{User: SiteUser, Env: github.GitEnv(token)}); err != nil {
-		return fmt.Errorf("fetch code: %w", err)
-	}
-
-	// 2. Environment file on first deploy.
-	step(w, "Preparing environment")
-	prep := fmt.Sprintf(`if [ ! -f artisan ]; then
-    echo "Warning: no artisan file found; this does not look like a Laravel app."
-fi
-if [ ! -f .env ] && [ -f .env.example ]; then
-    echo "Creating .env from .env.example"
-    cp .env.example .env
-    sed -i -e 's|^APP_ENV=.*|APP_ENV=production|' \
-           -e 's|^APP_DEBUG=.*|APP_DEBUG=false|' \
-           -e 's|^APP_URL=.*|APP_URL=http://%[1]s|' .env
-fi
-if [ -f .env ]; then
-    chmod 640 .env
-    if grep -q '^DB_CONNECTION=sqlite' .env && ! grep -q '^DB_DATABASE=' .env && [ ! -f database/database.sqlite ]; then
-        echo "Creating SQLite database at database/database.sqlite"
-        touch database/database.sqlite
-    fi
-fi
-echo "OK"`, site.Domain)
-	if err := d.run(ctx, w, prep, executor.Options{User: SiteUser, Dir: dir}); err != nil {
-		return fmt.Errorf("prepare environment: %w", err)
-	}
-	if db != nil {
-		if err := d.CreateDatabase(ctx, w, *db); err != nil {
-			return err
-		}
-		if err := d.WriteDatabaseEnv(ctx, w, site, *db); err != nil {
-			return err
-		}
-	}
-
-	// 3. The user's deploy script, with the site's PHP version first on PATH.
-	if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
-		return err
-	}
-	if err := d.EnsureNode(ctx, w, dir, site.NodeVersion); err != nil {
-		return err
-	}
-	step(w, "Running deploy script")
-	env := []string{
-		"SKIFF_SITE_PATH=" + dir,
-		"SKIFF_BRANCH=" + site.Branch,
-		"SKIFF_DOMAIN=" + site.Domain,
-		"SKIFF_PHP=" + site.PHPVersion,
-		"SKIFF_NODE=" + site.NodeVersion,
-		"COMPOSER_NO_INTERACTION=1",
-		"NPM_CONFIG_UPDATE_NOTIFIER=false",
-		"NPM_CONFIG_FUND=false",
-	}
-	banner := `echo "Using PHP $(php -r 'echo PHP_VERSION;')"` + "\n"
-	if site.NodeVersion != "" {
-		banner += `if command -v node >/dev/null 2>&1; then echo "Using Node.js $(node -v)"; fi` + "\n"
-	}
-	script := "set -eo pipefail\n" + withPHP(site.PHPVersion, withNode(site.NodeVersion, banner+site.DeployScript))
-	if err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Dir: dir, Env: env}, w); err != nil {
-		return fmt.Errorf("deploy script: %w", err)
-	}
-
-	// 4. Web server. The config is written once (later edits, e.g. certbot's,
-	// are kept), but its PHP-FPM socket always follows the site's PHP version.
-	step(w, "Configuring Nginx")
-	ng := fmt.Sprintf(`if [ ! -f %[1]s ]; then
-    cat > %[1]s
-    echo "Created %[1]s"
-else
-    echo "Keeping existing %[1]s"
-    sed -i -E 's#unix:/run/php/php[0-9.]+-fpm-%[4]s\.sock#unix:%[5]s#' %[1]s
-    if ! grep -q 'fastcgi_buffer_size' %[1]s; then
-        sed -i 's#^\([[:space:]]*\)fastcgi_hide_header X-Powered-By;#&\n\1fastcgi_buffer_size 64k;\n\1fastcgi_buffers 16 32k;#' %[1]s
-        echo "Added larger FastCGI header buffers"
-    fi
-fi
-ln -sfn %[1]s %[2]s
-nginx -t
-service nginx reload
-service php%[3]s-fpm reload`, q(NginxConfigPath(site.Domain)), q(nginxEnabledPath(site.Domain)), site.PHPVersion,
-		SiteUser, fpmSocket(site.PHPVersion))
-	if err := d.run(ctx, w, ng, executor.Options{Stdin: strings.NewReader(NginxConfig(site))}); err != nil {
-		return fmt.Errorf("configure nginx: %w", err)
-	}
-	fmt.Fprintf(w, "\nLive at %s://%s\n", site.Scheme(), site.Domain)
-	return nil
 }
 
 // Delete removes the site's Nginx config and files.
@@ -381,7 +273,7 @@ if command -v nginx >/dev/null 2>&1; then nginx -t && service nginx reload; fi`,
 // ReadEnv returns the site's .env file ("" if it doesn't exist yet).
 func (d *Deployer) ReadEnv(ctx context.Context, site store.Site) (string, error) {
 	var out bytes.Buffer
-	script := "cat -- " + shell.Quote(SitePath(site.Domain)+"/.env") + " 2>/dev/null || true"
+	script := locate(site.Domain) + `cat -- "$ENVF" 2>/dev/null || true`
 	err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser}, &out)
 	return out.String(), err
 }
@@ -389,15 +281,14 @@ func (d *Deployer) ReadEnv(ctx context.Context, site store.Site) (string, error)
 // WriteEnv atomically replaces the site's .env and refreshes Laravel's config
 // cache if the app uses one.
 func (d *Deployer) WriteEnv(ctx context.Context, site store.Site, content string) error {
-	dir := shell.Quote(SitePath(site.Domain))
-	script := fmt.Sprintf(`test -d %[1]s || { echo "The site has not been deployed yet." >&2; exit 1; }
-tmp=$(mktemp %[1]s/.env.skiff.XXXXXX)
+	script := locate(site.Domain) + `test -d "$SITE" || { echo "The site has not been deployed yet." >&2; exit 1; }
+tmp=$(mktemp "$(dirname "$ENVF")/.env.skiff.XXXXXX")
 cat > "$tmp"
 chmod 640 "$tmp"
-mv "$tmp" %[1]s/.env
-if [ -f %[1]s/bootstrap/cache/config.php ]; then
-    cd %[1]s && php artisan config:cache
-fi`, dir)
+mv "$tmp" "$ENVF"
+if [ -f "$APP/bootstrap/cache/config.php" ]; then
+    cd "$APP" && php artisan config:cache
+fi`
 	var out bytes.Buffer
 	err := d.run(ctx, &out, withPHP(site.PHPVersion, script), executor.Options{User: SiteUser, Stdin: strings.NewReader(content)})
 	if err != nil {

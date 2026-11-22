@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"skiff/internal/executor"
-	"skiff/internal/shell"
 	"skiff/internal/store"
 )
 
@@ -23,13 +22,12 @@ func (d *Deployer) RunCommand(ctx context.Context, w io.Writer, site store.Site,
 	if command == "" {
 		return fmt.Errorf("empty command")
 	}
-	dir := SitePath(site.Domain)
 	for _, line := range strings.Split(command, "\n") {
 		fmt.Fprintf(w, "$ %s\n", line)
 	}
 	fmt.Fprintln(w)
 	env := []string{
-		"SKIFF_SITE_PATH=" + dir,
+		"SKIFF_SITE_PATH=" + SitePath(site.Domain) + "/current",
 		"SKIFF_BRANCH=" + site.Branch,
 		"SKIFF_DOMAIN=" + site.Domain,
 		"SKIFF_PHP=" + site.PHPVersion,
@@ -37,7 +35,7 @@ func (d *Deployer) RunCommand(ctx context.Context, w io.Writer, site store.Site,
 		"COMPOSER_NO_INTERACTION=1",
 		"NPM_CONFIG_UPDATE_NOTIFIER=false",
 	}
-	script := fmt.Sprintf("cd %s || { echo \"The site hasn't been deployed yet.\" >&2; exit 1; }\nset -eo pipefail\n", shell.Quote(dir)) +
+	script := locate(site.Domain) + "cd \"$APP\" 2>/dev/null || { echo \"The site hasn't been deployed yet.\" >&2; exit 1; }\nset -eo pipefail\n" +
 		withPHP(site.PHPVersion, withNode(site.NodeVersion, command))
 	return d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Env: env, Stdin: strings.NewReader("")}, w)
 }

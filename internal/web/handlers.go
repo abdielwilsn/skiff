@@ -332,6 +332,8 @@ type siteData struct {
 	NginxPath string
 
 	Database     *store.Database
+	Releases     []laravel.Release
+	ReleasesErr  string
 	PHPVersions  []string
 	NodeVersions []string
 
@@ -351,7 +353,7 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	if !ok {
 		return
 	}
-	d := siteData{Site: site, Path: laravel.SitePath(site.Domain), NginxPath: laravel.NginxConfigPath(site.Domain)}
+	d := siteData{Site: site, Path: laravel.SitePath(site.Domain) + "/current", NginxPath: laravel.NginxConfigPath(site.Domain)}
 	d.Jobs, _ = s.st.SiteJobs(site.ID, 15)
 	d.Busy, _ = s.st.HasActiveJob(site.ID)
 	if db, err := s.st.DatabaseForSite(site.ID); err == nil {
@@ -359,6 +361,15 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	}
 	d.PHPVersions = laravel.PHPVersions
 	d.NodeVersions = laravel.NodeVersions
+	if site.DeployedAt != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		rels, err := s.deployer.Releases(ctx, site)
+		cancel()
+		if err != nil {
+			d.ReleasesErr = "Couldn't list releases: " + err.Error()
+		}
+		d.Releases = rels
+	}
 	d.HookBase = s.publicHTTPSBase()
 	d.GitHubConnected = s.githubToken() != ""
 	d.HTTPSEligible, d.HTTPSReason = laravel.HTTPSEligible(site.Domain)
@@ -525,6 +536,44 @@ func (s *Server) setNode(w http.ResponseWriter, r *http.Request, _ store.Session
 		}
 	}
 	redirect(w, r, s.siteURL(site))
+}
+
+// rollback makes an earlier release of the site live again.
+func (s *Server) rollback(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	id := r.FormValue("release")
+	if !laravel.ValidReleaseID(id) {
+		setFlash(w, "err", "Pick a release to roll back to.")
+		redirect(w, r, s.siteURL(site)+"#releases")
+		return
+	}
+	if busy, _ := s.st.HasActiveJob(site.ID); busy {
+		setFlash(w, "err", "Wait for the running job to finish first.")
+		redirect(w, r, s.siteURL(site)+"#releases")
+		return
+	}
+	siteID := site.ID
+	jobID, err := s.runner.Enqueue(&siteID, "rollback", "Roll back "+site.Domain+" to "+id,
+		func(ctx context.Context, log io.Writer) error {
+			cur, err := s.st.Site(siteID)
+			if err != nil {
+				return err
+			}
+			return s.deployer.Rollback(ctx, log, cur, id)
+		},
+		func(err error) {
+			if err == nil {
+				_ = s.st.SetSiteStatus(siteID, store.SiteActive)
+			}
+		})
+	if err != nil {
+		s.serverError(w, err)
+		return
+	}
+	redirect(w, r, "/jobs/"+strconv.FormatInt(jobID, 10))
 }
 
 func (s *Server) saveScript(w http.ResponseWriter, r *http.Request, _ store.Session) {

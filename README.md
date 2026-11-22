@@ -46,19 +46,38 @@ Then in the panel:
 
 ## What a deploy does
 
-1. Checks out the latest commit of the branch into `/home/skiff/<domain>`
-   (shallow clone; the GitHub token is passed to git through the environment,
-   never written to disk, and is *not* visible to your deploy script).
-2. On the first deploy, creates `.env` from `.env.example` with production
-   values and an SQLite database file if the app uses one.
-3. Runs the site's **deploy script** as the `skiff` user (editable per site;
-   the default runs `composer install`, `key:generate` if needed, `migrate`,
-   `optimize`).
-4. Writes the Nginx site config (first deploy only; your edits are kept),
-   then reloads Nginx and PHP-FPM.
+Deploys are release-based, so a failed deploy never touches the live site:
 
-Every job's output streams live in the UI and is kept under
-`/var/lib/skiff/logs`.
+```
+/home/skiff/<domain>/
+  current -> releases/20261122141530   what Nginx serves
+  releases/<id>/                        one checkout per deploy (last 5 kept)
+  shared/.env  shared/storage/  shared/database/database.sqlite
+  repo/                                 git cache
+```
+
+1. Fetches the newest commit of the branch into `repo/` and checks it out into
+   a new `releases/<id>/` (the GitHub token is passed to git through the
+   environment, never written to disk, and isn't visible to your deploy script).
+2. Links the shared `.env`, `storage/` and SQLite database into the release
+   (`.env` is created from `.env.example` on the first deploy).
+3. Runs the site's **deploy script** in the release as the `skiff` user (editable
+   per site; the default runs `composer install`, clears cached config/routes,
+   `key:generate` if needed, `npm ci && npm run build`, `migrate`, `optimize`).
+4. Only if that succeeded: switches `current` to the new release with an atomic
+   rename, updates Nginx, and reloads Nginx and PHP-FPM. If anything failed, the
+   unfinished release is deleted and the live site is unchanged.
+5. Keeps the newest 5 releases for rollback and drops `node_modules` from
+   releases that aren't live.
+
+**Rollback**: the site page lists the kept releases; **Roll back** switches
+`current` back instantly and rebuilds the config cache from the current `.env`.
+Database migrations run since that release are not undone.
+
+Sites deployed before release-based deploys move over on their next deploy:
+their `.env`, `storage/` and SQLite file are moved into `shared/` (and linked
+back, so the old code keeps working until the switch), and the old checkout is
+removed on the deploy after that.
 
 ## Deploying new commits
 

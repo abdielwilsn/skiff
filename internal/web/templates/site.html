@@ -78,6 +78,41 @@
   {{template "jobs" $d.Jobs}}
 </section>
 
+<section class="section" id="releases">
+  <div class="section-head">
+    <h2>Releases</h2>
+    <span class="hint">The last {{len $d.Releases}} successful deploys. Rolling back switches instantly; database migrations aren't undone.</span>
+  </div>
+  <div class="card">
+  {{with $d.ReleasesErr}}<div class="list-empty">{{.}}</div>
+  {{else}}{{if $d.Releases}}
+    <ul class="list">
+    {{range $d.Releases}}
+      <li class="list-row">
+        <span class="status {{if .Current}}tone-ok{{end}}"><i></i></span>
+        <div class="list-main">
+          <div class="list-title"><span class="truncate">{{if .Revision}}{{.Revision}}{{else}}Release {{.ID}}{{end}}</span>{{if .Current}}<span class="badge">Live</span>{{end}}</div>
+          <div class="list-sub"><span class="mono">{{.ID}}</span><span>Deployed {{ago .Built}}</span></div>
+        </div>
+        <div class="list-side">
+          {{if not .Current}}
+          <form method="post" action="/sites/{{$s.ID}}/rollback"
+                data-confirm="Roll {{$s.Domain}} back to this release ({{.Revision}})? It goes live immediately. Database migrations run since then are NOT undone.">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <input type="hidden" name="release" value="{{.ID}}">
+            <button class="btn small" {{if $d.Busy}}disabled{{end}}>Roll back</button>
+          </form>
+          {{end}}
+        </div>
+      </li>
+    {{end}}
+    </ul>
+  {{else}}
+    <div class="list-empty">{{if $s.DeployedAt}}Releases appear here from the next deploy on.{{else}}Deploy the site to create its first release.{{end}}</div>
+  {{end}}{{end}}
+  </div>
+</section>
+
 <section class="section" id="autodeploy">
   <div class="card">
     <div class="card-body">

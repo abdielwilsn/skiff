@@ -61,7 +61,7 @@ func TestDeployUsesSitePHP(t *testing.T) {
 			t.Errorf("deploy scripts missing %q", want)
 		}
 	}
-	if !strings.Contains(rec.stdin[len(rec.stdin)-1], "fastcgi_pass unix:/run/php/php8.4-fpm-skiff.sock") {
+	if !strings.Contains(strings.Join(rec.stdin, "\n"), "fastcgi_pass unix:/run/php/php8.4-fpm-skiff.sock") {
 		t.Error("new Nginx config should use the site's PHP socket")
 	}
 }
