@@ -153,6 +153,9 @@ type newSiteData struct {
 	Node                        string
 	NodeVersions                []string
 	NodeSet                     bool // the form was submitted, so Node "" means "none"
+	Framework                   string
+	Frameworks                  []laravel.Framework
+	StartCommand, OutputDir     string
 }
 
 func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
@@ -166,6 +169,10 @@ func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 	d.NodeVersions = laravel.NodeVersions
 	if !d.NodeSet {
 		d.Node = laravel.DefaultNode
+	}
+	d.Frameworks = laravel.Frameworks
+	if d.Framework == "" {
+		d.Framework = "laravel"
 	}
 	if d.Connected {
 		d.Repos, _ = s.repos(r.Context(), false)
@@ -193,9 +200,24 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		PHP:      r.FormValue("php"),
 		Node:     r.FormValue("node"),
 		NodeSet:  true,
+
+		Framework:    r.FormValue("framework"),
+		StartCommand: strings.TrimSpace(r.FormValue("start_command")),
+		OutputDir:    strings.Trim(strings.TrimSpace(r.FormValue("output_dir")), "/"),
 	}
 	if d.Branch == "" {
 		d.Branch = "main"
+	}
+	fw := laravel.FrameworkByID(d.Framework)
+	d.Framework = fw.ID
+	if fw.Kind != store.KindLaravel && !laravel.ValidPHP(d.PHP) {
+		d.PHP = laravel.DefaultPHP // unused by JS projects
+	}
+	if d.StartCommand == "" {
+		d.StartCommand = fw.Start
+	}
+	if d.OutputDir == "" {
+		d.OutputDir = fw.Output
 	}
 	switch {
 	case !validRepo(d.Repo):
@@ -210,11 +232,24 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		d.Error = "Choose a Node.js version."
 	case d.Domain == s.panelHTTPSDomain():
 		d.Error = d.Domain + " is where this panel is served. Use a different domain for the site."
+	case fw.Kind != store.KindLaravel && d.Node == "":
+		d.Error = fw.Name + " needs Node.js; pick a version."
+	case fw.Kind == store.KindNode && !laravel.ValidStartCommand(d.StartCommand):
+		d.Error = "Enter the command that starts your app, e.g. npm run start."
+	case fw.Kind == store.KindStatic && !laravel.ValidOutputDir(d.OutputDir):
+		d.Error = "Enter the folder your build writes to, e.g. dist (or . for the repository root)."
 	}
 	if d.Error == "" {
 		site := store.Site{
 			Domain: d.Domain, Repo: d.Repo, Branch: d.Branch,
-			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: laravel.DefaultDeployScript,
+			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: laravel.DefaultDeployScriptFor(fw.Kind),
+			Kind: fw.Kind,
+		}
+		switch fw.Kind {
+		case store.KindNode:
+			site.StartCommand = d.StartCommand
+		case store.KindStatic:
+			site.OutputDir = d.OutputDir
 		}
 		id, err := s.st.CreateSite(site)
 		switch {
@@ -225,7 +260,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 			return
 		default:
 			site.ID = id
-			if d.CreateDB && s.mysqlInstalled() {
+			if d.CreateDB && s.mysqlInstalled() && fw.Kind == store.KindLaravel {
 				if _, err := s.newDatabaseRecord(laravel.DBNameFor(site.Domain), &id); err != nil {
 					s.serverError(w, err)
 					return
@@ -334,6 +369,8 @@ type siteData struct {
 	Database     *store.Database
 	Releases     []laravel.Release
 	ReleasesErr  string
+	Process      laravel.ProcessStatus
+	MaxWorkers   int
 	PHPVersions  []string
 	NodeVersions []string
 
@@ -361,6 +398,12 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	}
 	d.PHPVersions = laravel.PHPVersions
 	d.NodeVersions = laravel.NodeVersions
+	d.MaxWorkers = laravel.MaxWorkers
+	if site.DeployedAt != nil && !s.cfg.DryRun && (site.IsNode() || site.WorkerCount > 0 || site.Scheduler) {
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		d.Process, _ = s.deployer.Status(ctx, site)
+		cancel()
+	}
 	if site.DeployedAt != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		rels, err := s.deployer.Releases(ctx, site)
@@ -629,9 +672,22 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request, _ store.Session
 	defer cancel()
 	if err := s.deployer.WriteEnv(ctx, site, normalizeText(r.FormValue("env"))); err != nil {
 		setFlash(w, "err", "Could not save .env: "+err.Error())
-	} else {
-		setFlash(w, "ok", ".env saved.")
+		redirect(w, r, s.siteURL(site)+"/env")
+		return
 	}
+	// Long-running processes read the environment when they start.
+	if site.DeployedAt != nil && (site.IsNode() || site.WorkerCount > 0) {
+		setFlash(w, "ok", ".env saved. Restarting so it takes effect.")
+		s.enqueueSiteJob(w, r, site, "restart", "Restart "+site.Domain+" after .env change",
+			func(ctx context.Context, log io.Writer, cur store.Site) error {
+				if cur.IsNode() {
+					return s.deployer.StartApp(ctx, log, cur)
+				}
+				return s.deployer.ApplyLaravelProcesses(ctx, log, cur)
+			})
+		return
+	}
+	setFlash(w, "ok", ".env saved.")
 	redirect(w, r, s.siteURL(site)+"/env")
 }
 

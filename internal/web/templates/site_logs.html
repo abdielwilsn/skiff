@@ -1,0 +1,17 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$s := $d.Site}}
+<div class="crumbs"><a href="/">Sites</a><span>/</span><a href="/sites/{{$s.ID}}">{{$s.Domain}}</a><span>/</span><span>Logs</span></div>
+<div class="page-head">
+  <div>
+    <h1>Logs</h1>
+    <p class="page-sub">{{if $s.IsLaravel}}Queue workers, scheduler and <code>storage/logs/laravel.log</code>{{else if $s.IsNode}}Output of the app process{{else}}Static sites have no running processes; deploy logs are under Activity{{end}}, newest at the bottom.</p>
+  </div>
+  <div class="actions"><a class="btn" href="/sites/{{$s.ID}}/logs">{{template "i-refresh"}} Refresh</a></div>
+</div>
+{{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+<div class="terminal">
+  <div class="terminal-bar"><span class="dots"><i></i><i></i><i></i></span><span>{{$s.Domain}}</span></div>
+  <pre class="log" id="site-log">{{$d.Logs}}</pre>
+</div>
+{{end}}

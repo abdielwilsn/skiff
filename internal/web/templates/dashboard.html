@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>Sites</h1>
-    <p class="page-sub">Laravel apps deployed on this server.</p>
+    <p class="page-sub">Laravel and JavaScript apps deployed on this server.</p>
   </div>
   <div class="actions">
     <a class="btn primary" href="/sites/new">{{template "i-plus"}} New site</a>
@@ -48,6 +48,7 @@
     </div>
     <div class="site-card-meta">
       <span class="meta">{{template "i-github"}} {{.Repo}}</span>
+      <span class="meta subtle">{{.KindLabel}}</span>
     </div>
     <div class="site-card-meta">
       <span class="meta">{{template "i-branch"}} <span class="mono">{{.Branch}}</span></span>
@@ -65,7 +66,7 @@
 <div class="empty">
   <span class="callout-icon">{{template "i-rocket"}}</span>
   <h2>Deploy your first app</h2>
-  <p class="muted">Pick a Laravel repository and a domain. Skiff clones it, installs dependencies, builds assets and serves it with Nginx.</p>
+  <p class="muted">Pick a repository and a domain: Laravel, Next.js, Nuxt, SvelteKit, Vite, Astro or plain Node. Skiff clones it, installs dependencies, builds it and serves it with Nginx.</p>
   <a class="btn primary" href="/sites/new">{{template "i-plus"}} New site</a>
 </div>
 {{end}}

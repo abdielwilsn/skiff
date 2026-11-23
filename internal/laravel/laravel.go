@@ -238,7 +238,77 @@ server {
 }
 `
 
+const nodeNginxTemplate = `# Managed by Skiff. Created on the first deploy; your edits are kept afterwards.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{DOMAIN}};
+
+    client_max_body_size 64m;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{PORT}};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # WebSockets / server-sent events
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $http_connection;
+        proxy_read_timeout 120s;
+        proxy_buffer_size 64k;
+        proxy_buffers 16 32k;
+    }
+}
+`
+
+const staticNginxTemplate = `# Managed by Skiff. Created on the first deploy; your edits are kept afterwards.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{DOMAIN}};
+    root {{ROOT}};
+    index index.html;
+    charset utf-8;
+
+    add_header X-Frame-Options "SAMEORIGIN";
+    add_header X-Content-Type-Options "nosniff";
+
+    location / {
+        # Single-page apps: unknown paths fall back to index.html
+        try_files $uri $uri/ $uri.html /index.html;
+    }
+
+    # Fingerprinted build assets can be cached for a long time
+    location ~* \.(?:js|mjs|css|woff2?|ttf|otf|eot|svg|png|jpe?g|gif|webp|avif|ico)$ {
+        try_files $uri =404;
+        expires 30d;
+        access_log off;
+    }
+
+    location ~ /\.(?!well-known).* {
+        deny all;
+    }
+}
+`
+
+// staticRoot is the folder Nginx serves for a static site.
+func staticRoot(site store.Site) string {
+	out := strings.Trim(site.OutputDir, "/")
+	if out == "" || out == "." {
+		return SitePath(site.Domain) + "/current"
+	}
+	return SitePath(site.Domain) + "/current/" + out
+}
+
 func NginxConfig(site store.Site) string {
+	switch {
+	case site.IsNode():
+		return strings.NewReplacer("{{DOMAIN}}", site.Domain, "{{PORT}}", fmt.Sprint(site.Port)).Replace(nodeNginxTemplate)
+	case site.IsStatic():
+		return strings.NewReplacer("{{DOMAIN}}", site.Domain, "{{ROOT}}", staticRoot(site)).Replace(staticNginxTemplate)
+	}
 	return strings.NewReplacer(
 		"{{DOMAIN}}", site.Domain,
 		"{{ROOT}}", SitePath(site.Domain)+"/current/public",
@@ -258,6 +328,10 @@ func (d *Deployer) Delete(ctx context.Context, w io.Writer, site store.Site) err
 if command -v nginx >/dev/null 2>&1; then nginx -t && service nginx reload; fi`,
 		q(nginxEnabledPath(site.Domain)), q(NginxConfigPath(site.Domain)))
 	if err := d.run(ctx, w, ng, executor.Options{}); err != nil {
+		return err
+	}
+	step(w, "Stopping background processes")
+	if err := d.RemoveProcesses(ctx, w, site.Domain); err != nil {
 		return err
 	}
 	if site.HTTPS {

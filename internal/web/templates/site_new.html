@@ -38,13 +38,33 @@
   </div>
   <hr class="divider">
   <div class="card-body stack">
+    <h2>Project</h2>
+    <div class="form-grid">
+      <label class="full">Framework
+        <select name="framework" id="framework">
+          {{range $d.Frameworks}}<option value="{{.ID}}" data-kind="{{.Kind}}" data-start="{{.Start}}" data-output="{{.Output}}" {{if eq .ID $d.Framework}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+        <span class="field-hint">Sets the project type and sensible defaults; everything stays editable.</span>
+      </label>
+      <label class="full" data-kinds="node">Start command
+        <input name="start_command" id="start_command" value="{{$d.StartCommand}}" placeholder="npm run start" spellcheck="false" autocomplete="off">
+        <span class="field-hint">Runs in the deployed release with <code>PORT</code> and <code>HOST</code> set; Nginx forwards your domain to it.</span>
+      </label>
+      <label class="full" data-kinds="static">Output folder
+        <input name="output_dir" id="output_dir" value="{{$d.OutputDir}}" placeholder="dist" spellcheck="false" autocomplete="off">
+        <span class="field-hint">Where your build writes its files, e.g. <code>dist</code>. Use <code>.</code> to serve the repository as is.</span>
+      </label>
+    </div>
+  </div>
+  <hr class="divider">
+  <div class="card-body stack">
     <h2>Domain &amp; runtime</h2>
     <div class="form-grid">
       <label class="full">Domain
         <input name="domain" value="{{$d.Domain}}" placeholder="app.example.com" required spellcheck="false" autocomplete="off">
         <span class="field-hint">Point its DNS A record at this server. No domain yet? Use the server's IP{{with $d.Host}}, e.g. <code>{{.}}</code>{{end}}.</span>
       </label>
-      <label>PHP
+      <label data-kinds="laravel">PHP
         <select name="php">
           {{range $d.PHPVersions}}<option value="{{.}}" {{if eq . $d.PHP}}selected{{end}}>PHP {{.}}</option>{{end}}
         </select>
@@ -55,9 +75,10 @@
           {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $d.Node}}selected{{end}}>Node {{.}} (LTS)</option>{{end}}
           <option value="" {{if not $d.Node}}selected{{end}}>None</option>
         </select>
-        <span class="field-hint">Builds Vite assets. Only installed if the repo has a <code>package.json</code>.</span>
+        <span class="field-hint">Builds front-end assets, and runs Node apps. Installed on the first deploy.</span>
       </label>
     </div>
+    <div data-kinds="laravel">
     {{if $d.MySQL}}
     <label class="check">
       <input type="checkbox" name="mysql" value="1" {{if $d.CreateDB}}checked{{end}}>
@@ -68,6 +89,7 @@
     {{else}}
     <p class="hint">The site will use SQLite. For MySQL, <a href="/databases">install it on the Databases page</a> first.</p>
     {{end}}
+    </div>
   </div>
   <div class="card-footer">
     <span>PHP and Node are installed on the first deploy if needed.</span>

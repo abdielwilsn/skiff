@@ -1,6 +1,6 @@
 # Skiff
 
-A tiny, self-hosted server panel for Laravel apps, in the spirit of Laravel Forge.
+A tiny, self-hosted server panel for Laravel and JavaScript apps, in the spirit of Laravel Forge.
 Install it on a fresh Ubuntu VPS, connect GitHub, pick a repository, and Skiff
 clones it, installs dependencies, and serves it with Nginx + PHP-FPM.
 
@@ -96,6 +96,41 @@ a deploy; the job title shows the commit and who pushed it.
 - Pushes that arrive while a deploy is already queued are folded into it, since
   every deploy fetches the latest commit.
 - Turning auto-deploy off, or deleting the site, removes the webhook.
+
+## Queue workers & scheduler (Laravel)
+
+The **Queue workers & scheduler** card on a Laravel site's page:
+
+- **Worker processes** (0–10) run `php artisan queue:work <options>` as systemd
+  services (`skiff-<domain>-worker@N`) as the `skiff` user in the live release,
+  with the site's PHP. They restart if they crash and are restarted after every
+  deploy, rollback and `.env` change so they always run the current code.
+- **Options** are passed to `queue:work`, e.g. `redis --queue=high,default
+  --tries=3 --timeout=90`.
+- **Scheduler** runs `php artisan schedule:run` every minute via a systemd
+  timer (`skiff-<domain>-schedule.timer`).
+
+The site's **Logs** page shows their output (from the journal) and the tail of
+`storage/logs/laravel.log`.
+
+## JavaScript projects
+
+Pick a framework on **New site** and Skiff sets the project type:
+
+| Type | Frameworks | How it's served |
+|---|---|---|
+| **Node.js app** | Next.js, Nuxt, SvelteKit (adapter-node), Remix / React Router, Astro (server), Express, Fastify, NestJS… | Your **start command** runs as a systemd service (`skiff-<domain>-app`) with `PORT`, `HOST=127.0.0.1`, `NODE_ENV=production` and the site's `.env`; Nginx proxies the domain to it (WebSockets included). |
+| **Static site** | Vite (React, Vue, Svelte, Solid), Astro, Create React App, Next.js static export, plain HTML | Nginx serves the build **output folder** (e.g. `dist`) from the live release, falling back to `index.html` for client-side routes. |
+
+The default deploy script installs dependencies with the package manager whose
+lockfile is in the repo (npm, pnpm or yarn) and runs the `build` script if
+there is one. Node apps and static sites get the same release-based deploys,
+rollback, HTTPS, push-to-deploy, `.env` editor and Commands as Laravel sites.
+
+After switching a Node app to a new release, Skiff waits for it to answer on
+its port. **If it doesn't start, the previous release is put back
+automatically** and the deploy is marked failed with the app's last log lines.
+Saving the `.env` restarts the app.
 
 ## Running commands
 

@@ -121,59 +121,120 @@ echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.R
 	}
 
 	// 2. Go live: an atomic rename of the "current" link.
-	step(w, "Switching to release %s", id)
-	activate := fmt.Sprintf(`cd %s
-ln -sfn %s current.next
-mv -Tf current.next current
-echo "current -> $(readlink current)"`, q(dir), q("releases/"+id))
-	if err := d.run(ctx, w, activate, executor.Options{User: SiteUser}); err != nil {
+	prev := d.liveRelease(ctx, dir)
+	if err := d.switchTo(ctx, w, dir, id); err != nil {
 		d.discardRelease(ctx, w, rel)
 		return fmt.Errorf("switch release: %w", err)
 	}
 
-	// 3. Web server. The config is written once (later edits, e.g. certbot's,
-	// are kept); its document root, PHP-FPM socket and header buffers are
-	// brought up to date. Reloading PHP-FPM clears OPcache for the new code.
-	step(w, "Configuring Nginx")
-	ng := fmt.Sprintf(`if [ ! -f %[1]s ]; then
-    cat > %[1]s
-    echo "Created %[1]s"
-else
-    echo "Keeping existing %[1]s"
-    if grep -q '^[[:space:]]*root %[6]s/public;' %[1]s; then
-        sed -i 's#^\([[:space:]]*\)root %[6]s/public;#\1root %[6]s/current/public;#' %[1]s
-        echo "Document root moved to %[6]s/current/public"
-    fi
-    sed -i -E 's#unix:/run/php/php[0-9.]+-fpm-%[4]s\.sock#unix:%[5]s#' %[1]s
-    if ! grep -q 'fastcgi_buffer_size' %[1]s; then
-        sed -i 's#^\([[:space:]]*\)fastcgi_hide_header X-Powered-By;#&\n\1fastcgi_buffer_size 64k;\n\1fastcgi_buffers 16 32k;#' %[1]s
-        echo "Added larger FastCGI header buffers"
-    fi
-fi
-ln -sfn %[1]s %[2]s
-nginx -t
-service nginx reload
-service php%[3]s-fpm reload`, q(NginxConfigPath(site.Domain)), q(nginxEnabledPath(site.Domain)), site.PHPVersion,
-		SiteUser, fpmSocket(site.PHPVersion), dir)
-	if err := d.run(ctx, w, ng, executor.Options{Stdin: strings.NewReader(NginxConfig(site))}); err != nil {
+	// 3. Web server, then the site's processes.
+	if err := d.configureNginx(ctx, w, site); err != nil {
 		return fmt.Errorf("configure nginx: %w", err)
+	}
+	switch {
+	case site.IsNode():
+		if err := d.StartApp(ctx, w, site); err != nil {
+			// The new release doesn't start: put the previous one back.
+			if prev != "" {
+				step(w, "The new release didn't start; switching back to %s", prev)
+				if rerr := d.switchTo(ctx, w, dir, prev); rerr == nil {
+					if serr := d.StartApp(ctx, w, site); serr == nil {
+						d.discardRelease(ctx, w, rel)
+						return fmt.Errorf("the app didn't start, so the previous release (%s) is live again: %w", prev, err)
+					}
+				}
+			}
+			return fmt.Errorf("start app: %w", err)
+		}
+	case site.IsLaravel():
+		if site.WorkerCount > 0 || site.Scheduler {
+			if err := d.ApplyLaravelProcesses(ctx, w, site); err != nil {
+				return fmt.Errorf("the new release is live, but queue workers/scheduler failed: %w", err)
+			}
+		}
 	}
 
 	// 4. Housekeeping; failures here don't fail the deploy.
 	step(w, "Cleaning up")
-	if err := d.run(ctx, w, cleanupScript(dir, id), executor.Options{User: SiteUser}); err != nil {
+	if err := d.run(ctx, w, cleanupScript(dir, id, !site.IsNode()), executor.Options{User: SiteUser}); err != nil {
 		fmt.Fprintf(w, "Cleanup skipped: %v\n", err)
 	}
 	fmt.Fprintf(w, "\nLive at %s://%s (release %s)\n", site.Scheme(), site.Domain, id)
 	return nil
 }
 
+// liveRelease returns the id of the release "current" points at, or "".
+func (d *Deployer) liveRelease(ctx context.Context, dir string) string {
+	var out bytes.Buffer
+	_ = d.Exec.Run(ctx, "readlink "+shell.Quote(dir+"/current")+" 2>/dev/null || true", executor.Options{User: SiteUser}, &out)
+	id := strings.TrimPrefix(strings.TrimSpace(out.String()), "releases/")
+	if !ValidReleaseID(id) {
+		return ""
+	}
+	return id
+}
+
+// switchTo points "current" at a release with an atomic rename.
+func (d *Deployer) switchTo(ctx context.Context, w io.Writer, dir, id string) error {
+	step(w, "Switching to release %s", id)
+	script := fmt.Sprintf(`cd %s
+ln -sfn %s current.next
+mv -Tf current.next current
+echo "current -> $(readlink current)"`, shell.Quote(dir), shell.Quote("releases/"+id))
+	return d.run(ctx, w, script, executor.Options{User: SiteUser})
+}
+
+// configureNginx writes the site's Nginx config if it doesn't exist yet, or
+// brings the parts Skiff owns up to date (document root, PHP-FPM socket,
+// header buffers) while keeping other edits, e.g. certbot's. Then it reloads
+// Nginx, and PHP-FPM for Laravel sites (which also clears OPcache).
+func (d *Deployer) configureNginx(ctx context.Context, w io.Writer, site store.Site) error {
+	step(w, "Configuring Nginx")
+	q := shell.Quote
+	dir := SitePath(site.Domain)
+	conf := q(NginxConfigPath(site.Domain))
+	var update, reload string
+	switch {
+	case site.IsLaravel():
+		update = fmt.Sprintf(`    if grep -q '^[[:space:]]*root %[2]s/public;' %[1]s; then
+        sed -i 's#^\([[:space:]]*\)root %[2]s/public;#\1root %[2]s/current/public;#' %[1]s
+        echo "Document root moved to %[2]s/current/public"
+    fi
+    sed -i -E 's#unix:/run/php/php[0-9.]+-fpm-%[3]s\.sock#unix:%[4]s#' %[1]s
+    if ! grep -q 'fastcgi_buffer_size' %[1]s; then
+        sed -i 's#^\([[:space:]]*\)fastcgi_hide_header X-Powered-By;#&\n\1fastcgi_buffer_size 64k;\n\1fastcgi_buffers 16 32k;#' %[1]s
+        echo "Added larger FastCGI header buffers"
+    fi`, conf, dir, SiteUser, fpmSocket(site.PHPVersion))
+		reload = "\nservice php" + site.PHPVersion + "-fpm reload"
+	case site.IsStatic():
+		update = fmt.Sprintf(`    sed -i -E 's#^([[:space:]]*)root [^;]*;#\1root %[2]s;#' %[1]s`, conf, staticRoot(site))
+	default:
+		update = "    true"
+	}
+	script := fmt.Sprintf(`if [ ! -f %[1]s ]; then
+    cat > %[1]s
+    echo "Created %[1]s"
+else
+    echo "Keeping existing %[1]s"
+%[3]s
+fi
+ln -sfn %[1]s %[2]s
+nginx -t
+service nginx reload%[4]s`, conf, q(nginxEnabledPath(site.Domain)), update, reload)
+	return d.run(ctx, w, script, executor.Options{Stdin: strings.NewReader(NginxConfig(site))})
+}
+
 // buildRelease prepares the release directory and runs the deploy script in it.
 func (d *Deployer) buildRelease(ctx context.Context, w io.Writer, site store.Site, dir, rel, id string, db *DBSpec) error {
 	q := shell.Quote
 	step(w, "Preparing environment")
+	kind := site.Kind
+	if kind == "" {
+		kind = store.KindLaravel
+	}
 	prep := fmt.Sprintf(`SITE=%[1]s
 REL=%[2]s
+KIND=%[4]s
 SH="$SITE/shared"
 shopt -s dotglob nullglob
 mkdir -p "$SH"
@@ -181,7 +242,7 @@ mkdir -p "$SH"
 # A site deployed before release-based deploys keeps its code directly in
 # $SITE. Move its state into shared/ and link it back, so the old code keeps
 # working until this release goes live; nothing is copied or lost.
-if [ ! -e "$SITE/current" ] && [ -f "$SITE/artisan" ]; then
+if [ "$KIND" = laravel ] && [ ! -e "$SITE/current" ] && [ -f "$SITE/artisan" ]; then
     echo "Moving this site to release-based deploys"
     if [ -f "$SITE/.env" ] && [ ! -L "$SITE/.env" ] && [ ! -e "$SH/.env" ]; then
         mv "$SITE/.env" "$SH/.env" && ln -s "$SH/.env" "$SITE/.env"
@@ -196,18 +257,26 @@ if [ ! -e "$SITE/current" ] && [ -f "$SITE/artisan" ]; then
 fi
 
 cd "$REL"
-[ -f artisan ] || echo "Warning: no artisan file found; this does not look like a Laravel app."
 
-# .env: one shared copy, created from .env.example on the first deploy.
-if [ ! -f "$SH/.env" ] && [ -f .env.example ]; then
-    echo "Creating .env from .env.example"
-    cp .env.example "$SH/.env"
-    sed -i -e 's|^APP_ENV=.*|APP_ENV=production|' \
-           -e 's|^APP_DEBUG=.*|APP_DEBUG=false|' \
-           -e 's|^APP_URL=.*|APP_URL=http://%[3]s|' "$SH/.env"
+# .env: one shared copy, created on the first deploy.
+if [ ! -f "$SH/.env" ]; then
+    if [ -f .env.example ]; then
+        echo "Creating .env from .env.example"
+        cp .env.example "$SH/.env"
+        if [ "$KIND" = laravel ]; then
+            sed -i -e 's|^APP_ENV=.*|APP_ENV=production|' \
+                   -e 's|^APP_DEBUG=.*|APP_DEBUG=false|' \
+                   -e 's|^APP_URL=.*|APP_URL=http://%[3]s|' "$SH/.env"
+        fi
+    elif [ "$KIND" != laravel ]; then
+        touch "$SH/.env"
+    fi
 fi
 [ -f "$SH/.env" ] && chmod 640 "$SH/.env"
-rm -f .env && ln -s "$SH/.env" .env
+if [ -f "$SH/.env" ]; then rm -f .env && ln -s "$SH/.env" .env; fi
+
+if [ "$KIND" != laravel ]; then echo "OK"; exit 0; fi
+[ -f artisan ] || echo "Warning: no artisan file found; this does not look like a Laravel app."
 
 # storage/: shared across releases (uploads, logs, sessions, cache).
 if [ ! -d "$SH/storage" ]; then
@@ -226,7 +295,7 @@ if [ -f "$SH/.env" ] && grep -q '^DB_CONNECTION=sqlite' "$SH/.env" && ! grep -q 
     fi
     ln -sfn "$SH/database/database.sqlite" database/database.sqlite
 fi
-echo "OK"`, q(dir), q(rel), site.Domain)
+echo "OK"`, q(dir), q(rel), site.Domain, kind)
 	if err := d.run(ctx, w, prep, executor.Options{User: SiteUser}); err != nil {
 		return fmt.Errorf("prepare environment: %w", err)
 	}
@@ -240,8 +309,12 @@ echo "OK"`, q(dir), q(rel), site.Domain)
 		}
 	}
 
-	if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
-		return err
+	if site.IsLaravel() {
+		if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
+			return err
+		}
+	} else if site.NodeVersion == "" {
+		return fmt.Errorf("choose a Node.js version for this site (Runtime card)")
 	}
 	if err := d.EnsureNode(ctx, w, rel, site.NodeVersion); err != nil {
 		return err
@@ -260,7 +333,10 @@ echo "OK"`, q(dir), q(rel), site.Domain)
 		"NPM_CONFIG_UPDATE_NOTIFIER=false",
 		"NPM_CONFIG_FUND=false",
 	}
-	banner := `echo "Using PHP $(php -r 'echo PHP_VERSION;')"` + "\n"
+	banner := ""
+	if site.IsLaravel() {
+		banner = `echo "Using PHP $(php -r 'echo PHP_VERSION;')"` + "\n"
+	}
 	if site.NodeVersion != "" {
 		banner += `if command -v node >/dev/null 2>&1; then echo "Using Node.js $(node -v)"; fi` + "\n"
 	}
@@ -285,8 +361,9 @@ func (d *Deployer) discardRelease(ctx context.Context, w io.Writer, rel string) 
 // live one), drops node_modules from releases that aren't live, removes
 // unfinished releases, and retires the pre-release checkout of a site that
 // was just moved to release-based deploys.
-func cleanupScript(dir, id string) string {
+func cleanupScript(dir, id string, stripNodeModules bool) string {
 	return fmt.Sprintf(`SITE=%[1]s
+STRIP=%[4]t
 cd "$SITE"
 shopt -s dotglob nullglob
 LIVE="$(readlink current || true)"
@@ -298,7 +375,8 @@ for r in $(ls -1 releases | sort -r); do
         rm -rf -- "$path"; echo "Removed release $r"; continue
     fi
     kept=$((kept+1))
-    if [ -d "$path/node_modules" ]; then rm -rf -- "$path/node_modules"; fi
+    # Node apps need node_modules to run after a rollback; others only to build.
+    if [ "$STRIP" = true ] && [ -d "$path/node_modules" ]; then rm -rf -- "$path/node_modules"; fi
 done
 
 # Old checkouts from before release-based deploys: retire the one from this
@@ -314,7 +392,7 @@ if [ -f "$SITE/artisan" ]; then
     done
     echo "Moved the pre-release checkout to .legacy-%[3]s (removed on the next deploy)"
 fi
-echo "Kept $kept release(s)"`, shell.Quote(dir), KeepReleases, id)
+echo "Kept $kept release(s)"`, shell.Quote(dir), KeepReleases, id, stripNodeModules)
 }
 
 // Releases lists a site's finished releases, newest first.
@@ -369,10 +447,26 @@ if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi`, shell.
 	if err := d.run(ctx, w, withPHP(site.PHPVersion, sw), executor.Options{User: SiteUser}); err != nil {
 		return err
 	}
-	step(w, "Reloading PHP-FPM")
-	if err := d.run(ctx, w, fmt.Sprintf("service php%s-fpm reload", site.PHPVersion), executor.Options{}); err != nil {
-		return err
+	switch {
+	case site.IsNode():
+		if err := d.StartApp(ctx, w, site); err != nil {
+			return err
+		}
+	case site.IsLaravel():
+		step(w, "Reloading PHP-FPM")
+		if err := d.run(ctx, w, fmt.Sprintf("service php%s-fpm reload", site.PHPVersion), executor.Options{}); err != nil {
+			return err
+		}
+		if site.WorkerCount > 0 || site.Scheduler {
+			if err := d.ApplyLaravelProcesses(ctx, w, site); err != nil {
+				return err
+			}
+		}
 	}
-	fmt.Fprintln(w, "\nRolled back. Database migrations run since this release were not undone.")
+	if site.IsLaravel() {
+		fmt.Fprintln(w, "\nRolled back. Database migrations run since this release were not undone.")
+	} else {
+		fmt.Fprintln(w, "\nRolled back.")
+	}
 	return nil
 }

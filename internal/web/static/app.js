@@ -88,6 +88,34 @@
     });
   }
 
+  // New site: the framework picks the project type; show only its fields and
+  // fill in its defaults (unless the user already typed something else).
+  var fw = document.getElementById("framework");
+  if (fw) {
+    var lastDefaults = { start: "", output: "" };
+    var applyFramework = function (fill) {
+      var opt = fw.options[fw.selectedIndex];
+      var kind = opt.getAttribute("data-kind");
+      document.querySelectorAll("[data-kinds]").forEach(function (el) {
+        el.hidden = el.getAttribute("data-kinds").split(" ").indexOf(kind) === -1;
+      });
+      if (!fill) return;
+      [["start_command", "start", "data-start"], ["output_dir", "output", "data-output"]].forEach(function (f) {
+        var input = document.getElementById(f[0]);
+        if (input && (input.value === "" || input.value === lastDefaults[f[1]])) input.value = opt.getAttribute(f[2]);
+        lastDefaults[f[1]] = opt.getAttribute(f[2]);
+      });
+    };
+    lastDefaults.start = (document.getElementById("start_command") || {}).value || "";
+    lastDefaults.output = (document.getElementById("output_dir") || {}).value || "";
+    fw.addEventListener("change", function () { applyFramework(true); });
+    applyFramework(false);
+  }
+
+  // Logs page: start scrolled to the newest lines.
+  var siteLog = document.getElementById("site-log");
+  if (siteLog) siteLog.scrollTop = siteLog.scrollHeight;
+
   // Client-side repository filter.
   var filter = document.getElementById("repo-filter");
   if (filter) {

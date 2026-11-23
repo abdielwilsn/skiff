@@ -17,6 +17,22 @@ type commandPreset struct {
 	Danger         bool // destroys data; the page asks for confirmation
 }
 
+var jsCommandPresets = []commandPreset{
+	{"Node version", "node -v && npm -v", false},
+	{"List scripts", "npm run", false},
+	{"Outdated packages", "npm outdated || true", false},
+	{"Installed packages", "npm ls --depth=0", false},
+	{"Disk usage", "du -sh . node_modules 2>/dev/null", false},
+}
+
+// presetsFor returns the one-click commands for a site's project type.
+func presetsFor(site store.Site) []commandPreset {
+	if site.IsLaravel() {
+		return commandPresets
+	}
+	return jsCommandPresets
+}
+
 var commandPresets = []commandPreset{
 	{"Migrate", "php artisan migrate --force", false},
 	{"Migration status", "php artisan migrate:status", false},
@@ -43,7 +59,7 @@ func (s *Server) commandsPage(w http.ResponseWriter, r *http.Request, sess store
 	if !ok {
 		return
 	}
-	d := commandsData{Site: site, Presets: commandPresets, Command: r.URL.Query().Get("command")}
+	d := commandsData{Site: site, Presets: presetsFor(site), Command: r.URL.Query().Get("command")}
 	d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
 	s.render(w, r, "site_commands", http.StatusOK, pageFor(sess, site.Domain+" · Commands", "sites", d))
 }
@@ -55,7 +71,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, sess store.S
 	}
 	command := strings.TrimSpace(strings.ReplaceAll(r.FormValue("command"), "\r\n", "\n"))
 	fail := func(msg string) {
-		d := commandsData{Site: site, Presets: commandPresets, Command: command, Error: msg}
+		d := commandsData{Site: site, Presets: presetsFor(site), Command: command, Error: msg}
 		d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
 		s.render(w, r, "site_commands", http.StatusUnprocessableEntity, pageFor(sess, site.Domain+" · Commands", "sites", d))
 	}

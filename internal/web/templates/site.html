@@ -15,6 +15,7 @@
     <a class="btn" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">Visit {{template "i-external"}}</a>
     <a class="btn" href="/sites/{{$s.ID}}/env">{{template "i-key"}} Environment</a>
     <a class="btn" href="/sites/{{$s.ID}}/commands">{{template "i-terminal"}} Commands</a>
+    <a class="btn" href="/sites/{{$s.ID}}/logs">{{template "i-list"}} Logs</a>
     <form method="post" action="/sites/{{$s.ID}}/deploy">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <button class="btn primary" {{if $d.Busy}}disabled title="A job is already running"{{end}}>{{template "i-rocket"}} Deploy</button>
@@ -39,8 +40,9 @@
 
   <section class="card">
     <div class="card-body stack">
-      <h2>Runtime</h2>
+      <div class="card-title-row"><h2>Runtime</h2><span class="badge">{{$s.KindLabel}}</span></div>
       <dl class="kv">
+        {{if $s.IsLaravel}}
         <dt>PHP</dt>
         <dd>
           <form method="post" action="/sites/{{$s.ID}}/php" class="inline-form">
@@ -51,19 +53,26 @@
             <button class="btn small">Save</button>
           </form>
         </dd>
+        {{end}}
         <dt>Node.js</dt>
         <dd>
           <form method="post" action="/sites/{{$s.ID}}/node" class="inline-form">
             <input type="hidden" name="csrf" value="{{$csrf}}">
             <select name="node" aria-label="Node.js version">
               {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $s.NodeVersion}}selected{{end}}>Node {{.}}</option>{{end}}
-              <option value="" {{if not $s.NodeVersion}}selected{{end}}>None</option>
+              {{if $s.IsLaravel}}<option value="" {{if not $s.NodeVersion}}selected{{end}}>None</option>{{end}}
             </select>
             <button class="btn small">Save</button>
           </form>
         </dd>
+        {{if $s.IsNode}}
+        <dt>App</dt>
+        <dd>{{if $s.DeployedAt}}{{if eq $d.Process.App "active"}}<span class="status tone-ok"><i></i>Running on port {{$s.Port}}</span>{{else if $d.Process.App}}<span class="status tone-err"><i></i>{{$d.Process.App}}</span>{{else}}<span class="muted">Port {{$s.Port}}</span>{{end}}{{else}}<span class="muted">Starts after the first deploy (port {{$s.Port}})</span>{{end}}</dd>
+        {{end}}
+        {{if $s.IsLaravel}}
         <dt>Database</dt>
         <dd>{{with $d.Database}}<span class="row">{{template "i-db"}}<a class="link" href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}}{{template "status" .Status}}{{end}}</span>{{else}}<span class="muted">SQLite or set in .env</span>{{end}}</dd>
+        {{end}}
         <dt>Directory</dt>
         <dd><code>{{$d.Path}}</code></dd>
         <dt>Nginx config</dt>
@@ -78,10 +87,75 @@
   {{template "jobs" $d.Jobs}}
 </section>
 
+{{if $s.IsLaravel}}
+<section class="section" id="workers">
+  <form method="post" action="/sites/{{$s.ID}}/workers" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div class="card-title-row">
+        <h2>Queue workers &amp; scheduler</h2>
+        {{if $s.DeployedAt}}{{if gt $s.WorkerCount 0}}<span class="status {{if eq $d.Process.WorkersRunning $s.WorkerCount}}tone-ok{{else}}tone-err{{end}}"><i></i>{{$d.Process.WorkersRunning}}/{{$s.WorkerCount}} workers running</span>{{end}}{{end}}
+      </div>
+      <p class="muted">Workers run <code>php artisan queue:work</code> as background services that restart if they crash and are restarted on every deploy. The scheduler runs <code>php artisan schedule:run</code> every minute.</p>
+      <div class="form-grid">
+        <label>Worker processes
+          <input type="number" name="workers" min="0" max="{{$d.MaxWorkers}}" value="{{$s.WorkerCount}}">
+          <span class="field-hint">0 turns workers off.</span>
+        </label>
+        <label>Options for <code>queue:work</code>
+          <input name="options" value="{{$s.WorkerOptions}}" placeholder="--queue=high,default --tries=3 --timeout=90" spellcheck="false" autocomplete="off">
+          <span class="field-hint">Optional connection first, e.g. <code>redis --queue=emails</code>.</span>
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="scheduler" value="1" {{if $s.Scheduler}}checked{{end}}>
+        <span>Run the scheduler every minute
+          <span class="field-hint">For tasks defined in <code>routes/console.php</code> with <code>Schedule::</code>.{{if $s.DeployedAt}}{{if $s.Scheduler}} Currently {{if $d.Process.SchedulerEnabled}}active{{else}}not running{{end}}.{{end}}{{end}}</span>
+        </span>
+      </label>
+    </div>
+    <div class="card-footer">
+      <span>Output goes to <a href="/sites/{{$s.ID}}/logs">Logs</a>.</span>
+      <div class="actions">
+        {{if and $s.DeployedAt (gt $s.WorkerCount 0)}}<button class="btn ghost" formaction="/sites/{{$s.ID}}/restart" {{if $d.Busy}}disabled{{end}}>Restart workers</button>{{end}}
+        <button class="btn primary" {{if $d.Busy}}disabled{{end}}>Save</button>
+      </div>
+    </div>
+  </form>
+</section>
+{{else}}
+<section class="section" id="app">
+  <form method="post" action="/sites/{{$s.ID}}/app" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <h2>{{if $s.IsNode}}App process{{else}}Static output{{end}}</h2>
+      {{if $s.IsNode}}
+      <p class="muted">Skiff runs this command in the live release as a background service (restarted if it crashes and after every deploy) with <code>PORT={{$s.Port}}</code>, <code>HOST=127.0.0.1</code> and <code>NODE_ENV=production</code>, plus your <code>.env</code>. Nginx forwards <code>{{$s.Domain}}</code> to it. If a new release doesn't start, the previous one is put back automatically.</p>
+      <label>Start command
+        <input name="start_command" value="{{$s.StartCommand}}" required spellcheck="false" autocomplete="off">
+      </label>
+      {{else}}
+      <p class="muted">Nginx serves this folder from the live release; unknown paths fall back to <code>index.html</code> for single-page apps.</p>
+      <label>Output folder
+        <input name="output_dir" value="{{$s.OutputDir}}" required spellcheck="false" autocomplete="off">
+      </label>
+      {{end}}
+    </div>
+    <div class="card-footer">
+      <span>{{if $s.IsNode}}Saving restarts the app.{{else}}Saving updates Nginx right away.{{end}}</span>
+      <div class="actions">
+        {{if and $s.IsNode $s.DeployedAt}}<button class="btn ghost" formaction="/sites/{{$s.ID}}/restart" {{if $d.Busy}}disabled{{end}}>Restart</button>{{end}}
+        <button class="btn primary" {{if $d.Busy}}disabled{{end}}>Save</button>
+      </div>
+    </div>
+  </form>
+</section>
+{{end}}
+
 <section class="section" id="releases">
   <div class="section-head">
     <h2>Releases</h2>
-    <span class="hint">The last {{len $d.Releases}} successful deploys. Rolling back switches instantly; database migrations aren't undone.</span>
+    <span class="hint">The last {{len $d.Releases}} successful deploys. Rolling back switches instantly{{if $s.IsLaravel}}; database migrations aren't undone{{end}}.</span>
   </div>
   <div class="card">
   {{with $d.ReleasesErr}}<div class="list-empty">{{.}}</div>

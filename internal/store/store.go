@@ -55,6 +55,13 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN hook_secret TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE sites ADD COLUMN hook_id INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE jobs ADD COLUMN detail TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sites ADD COLUMN kind TEXT NOT NULL DEFAULT 'laravel'`,
+	`ALTER TABLE sites ADD COLUMN start_command TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sites ADD COLUMN port INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sites ADD COLUMN output_dir TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sites ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sites ADD COLUMN worker_options TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sites ADD COLUMN scheduler INTEGER NOT NULL DEFAULT 0`,
 }
 
 const schemaV1 = `
@@ -279,6 +286,16 @@ func (s *Store) DeleteSettings(keys ...string) error {
 
 // ---- sites -----------------------------------------------------------------
 
+// Site kinds.
+const (
+	KindLaravel = "laravel"
+	KindNode    = "node"   // a Node.js server (Next.js, Nuxt, Express…) behind Nginx
+	KindStatic  = "static" // built files served by Nginx (Vite SPA, Astro…)
+)
+
+// AppPortBase + site ID is the local port a Node app listens on.
+const AppPortBase = 4100
+
 type Site struct {
 	ID           int64
 	Domain       string
@@ -292,8 +309,32 @@ type Site struct {
 	HookSecret   string // HMAC secret GitHub signs webhook payloads with
 	HookID       int64  // GitHub's id for the webhook, to remove it later
 	HTTPS        bool   // a Let's Encrypt certificate is installed
-	CreatedAt    time.Time
-	DeployedAt   *time.Time
+
+	Kind          string // KindLaravel, KindNode or KindStatic
+	StartCommand  string // Node apps: how to start the server, e.g. "npm run start"
+	Port          int    // Node apps: local port the app listens on
+	OutputDir     string // static sites: build output served by Nginx, e.g. "dist"
+	WorkerCount   int    // Laravel: queue:work processes to keep running
+	WorkerOptions string // Laravel: options for queue:work
+	Scheduler     bool   // Laravel: run schedule:run every minute
+
+	CreatedAt  time.Time
+	DeployedAt *time.Time
+}
+
+func (x Site) IsLaravel() bool { return x.Kind == "" || x.Kind == KindLaravel }
+func (x Site) IsNode() bool    { return x.Kind == KindNode }
+func (x Site) IsStatic() bool  { return x.Kind == KindStatic }
+
+// KindLabel is the human name of the site's project type.
+func (x Site) KindLabel() string {
+	switch x.Kind {
+	case KindNode:
+		return "Node.js app"
+	case KindStatic:
+		return "Static site"
+	}
+	return "Laravel"
 }
 
 // Scheme is "https" once a certificate is installed, else "http".
@@ -304,7 +345,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -312,7 +353,8 @@ func scanSite(row scanner) (Site, error) {
 	var x Site
 	var created int64
 	var deployed sql.NullInt64
-	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS, &created, &deployed)
+	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS,
+		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -322,15 +364,41 @@ func scanSite(row scanner) (Site, error) {
 }
 
 func (s *Store) CreateSite(x Site) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, created_at)
-		VALUES(?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew, now())
+	if x.Kind == "" {
+		x.Kind = KindLaravel
+	}
+	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, kind, start_command, output_dir, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew,
+		x.Kind, x.StartCommand, x.OutputDir, now())
 	if isUnique(err) {
 		return 0, ErrDuplicate
 	}
 	if err != nil {
 		return 0, err
 	}
-	return res.LastInsertId()
+	id, err := res.LastInsertId()
+	if err != nil {
+		return 0, err
+	}
+	if x.Kind == KindNode {
+		// A stable, unique local port per site.
+		if _, err := s.db.Exec(`UPDATE sites SET port = ? WHERE id = ?`, AppPortBase+id, id); err != nil {
+			return 0, err
+		}
+	}
+	return id, nil
+}
+
+// SetAppSettings updates a Node app's start command or a static site's output folder.
+func (s *Store) SetAppSettings(id int64, startCommand, outputDir string) error {
+	_, err := s.db.Exec(`UPDATE sites SET start_command = ?, output_dir = ? WHERE id = ?`, startCommand, outputDir, id)
+	return err
+}
+
+// SetWorkers sets a Laravel site's queue workers and scheduler.
+func (s *Store) SetWorkers(id int64, count int, options string, scheduler bool) error {
+	_, err := s.db.Exec(`UPDATE sites SET worker_count = ?, worker_options = ?, scheduler = ? WHERE id = ?`, count, options, scheduler, id)
+	return err
 }
 
 func (s *Store) Site(id int64) (Site, error) {
