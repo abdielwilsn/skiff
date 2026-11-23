@@ -62,6 +62,21 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN worker_count INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE sites ADD COLUMN worker_options TEXT NOT NULL DEFAULT ''`,
 	`ALTER TABLE sites ADD COLUMN scheduler INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE sites ADD COLUMN python_version TEXT NOT NULL DEFAULT ''`,
+	`CREATE TABLE backups (
+		id          INTEGER PRIMARY KEY,
+		source      TEXT NOT NULL,
+		label       TEXT NOT NULL,
+		site_id     INTEGER REFERENCES sites(id) ON DELETE SET NULL,
+		reason      TEXT NOT NULL,
+		path        TEXT NOT NULL,
+		size        INTEGER NOT NULL DEFAULT 0,
+		remote      TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL,
+		error       TEXT NOT NULL DEFAULT '',
+		created_at  INTEGER NOT NULL
+	)`,
+	`CREATE INDEX backups_source ON backups(source, created_at)`,
 }
 
 const schemaV1 = `
@@ -291,9 +306,10 @@ const (
 	KindLaravel = "laravel"
 	KindNode    = "node"   // a Node.js server (Next.js, Nuxt, Express…) behind Nginx
 	KindStatic  = "static" // built files served by Nginx (Vite SPA, Astro…)
+	KindPython  = "python" // a Python app server (Django, FastAPI, Flask…) behind Nginx
 )
 
-// AppPortBase + site ID is the local port a Node app listens on.
+// AppPortBase + site ID is the local port a Node or Python app listens on.
 const AppPortBase = 4100
 
 type Site struct {
@@ -310,13 +326,14 @@ type Site struct {
 	HookID       int64  // GitHub's id for the webhook, to remove it later
 	HTTPS        bool   // a Let's Encrypt certificate is installed
 
-	Kind          string // KindLaravel, KindNode or KindStatic
-	StartCommand  string // Node apps: how to start the server, e.g. "npm run start"
-	Port          int    // Node apps: local port the app listens on
+	Kind          string // KindLaravel, KindNode, KindStatic or KindPython
+	StartCommand  string // Node/Python apps: how to start the server, e.g. "npm run start"
+	Port          int    // Node/Python apps: local port the app listens on
 	OutputDir     string // static sites: build output served by Nginx, e.g. "dist"
 	WorkerCount   int    // Laravel: queue:work processes to keep running
 	WorkerOptions string // Laravel: options for queue:work
 	Scheduler     bool   // Laravel: run schedule:run every minute
+	PythonVersion string // Python apps: interpreter version, e.g. "3.13"
 
 	CreatedAt  time.Time
 	DeployedAt *time.Time
@@ -325,6 +342,11 @@ type Site struct {
 func (x Site) IsLaravel() bool { return x.Kind == "" || x.Kind == KindLaravel }
 func (x Site) IsNode() bool    { return x.Kind == KindNode }
 func (x Site) IsStatic() bool  { return x.Kind == KindStatic }
+func (x Site) IsPython() bool  { return x.Kind == KindPython }
+
+// HasApp reports whether the site runs its own server process (Node or
+// Python) that Nginx proxies to.
+func (x Site) HasApp() bool { return x.IsNode() || x.IsPython() }
 
 // KindLabel is the human name of the site's project type.
 func (x Site) KindLabel() string {
@@ -333,6 +355,8 @@ func (x Site) KindLabel() string {
 		return "Node.js app"
 	case KindStatic:
 		return "Static site"
+	case KindPython:
+		return "Python app"
 	}
 	return "Laravel"
 }
@@ -345,7 +369,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, python_version, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -354,7 +378,7 @@ func scanSite(row scanner) (Site, error) {
 	var created int64
 	var deployed sql.NullInt64
 	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS,
-		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &created, &deployed)
+		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &x.PythonVersion, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -367,9 +391,9 @@ func (s *Store) CreateSite(x Site) (int64, error) {
 	if x.Kind == "" {
 		x.Kind = KindLaravel
 	}
-	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, kind, start_command, output_dir, created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew,
-		x.Kind, x.StartCommand, x.OutputDir, now())
+	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, kind, start_command, output_dir, python_version, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew,
+		x.Kind, x.StartCommand, x.OutputDir, x.PythonVersion, now())
 	if isUnique(err) {
 		return 0, ErrDuplicate
 	}
@@ -380,13 +404,19 @@ func (s *Store) CreateSite(x Site) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	if x.Kind == KindNode {
+	if x.HasApp() {
 		// A stable, unique local port per site.
 		if _, err := s.db.Exec(`UPDATE sites SET port = ? WHERE id = ?`, AppPortBase+id, id); err != nil {
 			return 0, err
 		}
 	}
 	return id, nil
+}
+
+// SetSitePython sets a Python app's interpreter version.
+func (s *Store) SetSitePython(id int64, version string) error {
+	_, err := s.db.Exec(`UPDATE sites SET python_version = ? WHERE id = ?`, version, id)
+	return err
 }
 
 // SetAppSettings updates a Node app's start command or a static site's output folder.
@@ -718,7 +748,136 @@ func (s *Store) FailInterrupted() error {
 	}
 	// A pending database attached to a never-deployed site is retried by its
 	// next deploy, so leave those alone.
-	_, err := s.db.Exec(`UPDATE databases SET status = ? WHERE status = ? OR (status = ? AND site_id IS NULL)`,
-		DBFailed, DBDeleting, DBPending)
+	if _, err := s.db.Exec(`UPDATE databases SET status = ? WHERE status = ? OR (status = ? AND site_id IS NULL)`,
+		DBFailed, DBDeleting, DBPending); err != nil {
+		return err
+	}
+	return s.FailInterruptedBackups()
+}
+
+// ---- backups ---------------------------------------------------------------
+
+// Backup statuses.
+const (
+	BackupRunning = "running"
+	BackupOK      = "ok"
+	BackupFailed  = "failed"
+)
+
+// Backup reasons.
+const (
+	BackupScheduled = "scheduled"
+	BackupManual    = "manual"
+	BackupDeploy    = "deploy"  // taken right before a deploy
+	BackupRestore   = "restore" // taken right before a restore
+)
+
+// Backup is one database dump.
+type Backup struct {
+	ID        int64
+	Source    string // "mysql:<db>" or "sqlite:<domain>:<path in shared/>"
+	Label     string // human name of the database
+	SiteID    *int64
+	Reason    string
+	Path      string // local file
+	Size      int64
+	Remote    string // object key in off-site storage; "" if not uploaded
+	Status    string
+	Error     string
+	CreatedAt time.Time
+}
+
+const backupCols = `id, source, label, site_id, reason, path, size, remote, status, error, created_at`
+
+func scanBackup(row scanner) (Backup, error) {
+	var b Backup
+	var site sql.NullInt64
+	var created int64
+	err := row.Scan(&b.ID, &b.Source, &b.Label, &site, &b.Reason, &b.Path, &b.Size, &b.Remote, &b.Status, &b.Error, &created)
+	if errors.Is(err, sql.ErrNoRows) {
+		return b, ErrNotFound
+	}
+	if site.Valid {
+		id := site.Int64
+		b.SiteID = &id
+	}
+	b.CreatedAt = time.Unix(created, 0)
+	return b, err
+}
+
+func (s *Store) queryBackups(q string, args ...any) ([]Backup, error) {
+	rows, err := s.db.Query(`SELECT `+backupCols+` FROM backups `+q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Backup
+	for rows.Next() {
+		b, err := scanBackup(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
+}
+
+// CreateBackup records a backup that is about to run.
+func (s *Store) CreateBackup(b Backup) (int64, error) {
+	res, err := s.db.Exec(`INSERT INTO backups(source, label, site_id, reason, path, status, created_at) VALUES(?,?,?,?,?,?,?)`,
+		b.Source, b.Label, b.SiteID, b.Reason, b.Path, BackupRunning, now())
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+// FinishBackup stores a backup's outcome.
+func (s *Store) FinishBackup(id int64, status string, size int64, errMsg string) error {
+	_, err := s.db.Exec(`UPDATE backups SET status = ?, size = ?, error = ? WHERE id = ?`, status, size, errMsg, id)
+	return err
+}
+
+// SetBackupRemote records where the off-site copy is ("" = none).
+func (s *Store) SetBackupRemote(id int64, key string) error {
+	_, err := s.db.Exec(`UPDATE backups SET remote = ? WHERE id = ?`, key, id)
+	return err
+}
+
+func (s *Store) Backup(id int64) (Backup, error) {
+	return scanBackup(s.db.QueryRow(`SELECT `+backupCols+` FROM backups WHERE id = ?`, id))
+}
+
+// Backups lists the most recent backups, newest first.
+func (s *Store) Backups(limit int) ([]Backup, error) {
+	return s.queryBackups(`ORDER BY created_at DESC, id DESC LIMIT ?`, limit)
+}
+
+// BackupsOf lists a source's backups, newest first.
+func (s *Store) BackupsOf(source string) ([]Backup, error) {
+	return s.queryBackups(`WHERE source = ? ORDER BY created_at DESC, id DESC`, source)
+}
+
+// LatestBackups returns each source's newest backup.
+func (s *Store) LatestBackups() (map[string]Backup, error) {
+	list, err := s.queryBackups(`WHERE id IN (SELECT MAX(id) FROM backups GROUP BY source)`)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Backup, len(list))
+	for _, b := range list {
+		out[b.Source] = b
+	}
+	return out, nil
+}
+
+func (s *Store) DeleteBackup(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM backups WHERE id = ?`, id)
+	return err
+}
+
+// FailInterruptedBackups marks backups that were running when Skiff stopped.
+func (s *Store) FailInterruptedBackups() error {
+	_, err := s.db.Exec(`UPDATE backups SET status = ?, error = 'Interrupted (Skiff restarted)' WHERE status = ?`, BackupFailed, BackupRunning)
 	return err
 }

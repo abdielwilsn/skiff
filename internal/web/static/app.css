@@ -225,6 +225,51 @@ main.narrow { max-width: 400px; padding-top: 12vh; }
 .pill-nav a:hover { color: var(--fg); border-color: var(--border); background: var(--bg-elevated); }
 section[id] { scroll-margin-top: 112px; }
 
+/* Stat tiles */
+.stat-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+.stat { background: var(--bg-elevated); padding: 16px 20px; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.stat strong { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-label { font-size: 12.5px; color: var(--fg-muted); }
+.callout-icon.sm { width: 32px; height: 32px; border-radius: 8px; color: var(--fg-muted); }
+.err-text { color: var(--err); max-width: 520px; }
+@media (max-width: 860px) { .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Dashboard server strip */
+.server-strip { display: flex; align-items: center; gap: 0; margin-bottom: 24px; padding: 0; text-decoration: none; color: inherit; overflow: hidden; }
+.server-strip:hover { border-color: var(--border-strong); }
+.strip-item { display: flex; flex-direction: column; gap: 2px; padding: 12px 20px; min-width: 0; border-right: 1px solid var(--border); }
+.strip-item strong { font-size: 15px; font-weight: 600; white-space: nowrap; }
+.strip-more { margin-left: auto; padding: 0 20px; color: var(--fg-muted); font-size: 13px; display: inline-flex; gap: 6px; align-items: center; white-space: nowrap; }
+@media (max-width: 640px) { .strip-item { padding: 10px 12px; } .strip-more { display: none; } }
+
+/* Server health charts */
+.stat-sub { font-size: 12.5px; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.text-warn { color: var(--warn); }
+.charts { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
+.chart-card { margin: 0; padding: 18px 20px 14px; }
+.chart-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+.chart-title { font-weight: 600; font-size: 14px; }
+.chart-now { font-size: 20px; font-weight: 600; letter-spacing: -0.02em; margin-left: auto; }
+.chart-wrap { position: relative; padding-left: 40px; }
+.chart { display: block; width: 100%; height: auto; overflow: visible; }
+.chart-grid { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-base { stroke: var(--border-strong); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-warn { stroke: var(--warn); stroke-width: 1; stroke-dasharray: 4 4; opacity: .55; vector-effect: non-scaling-stroke; }
+.chart-line { fill: none; stroke: var(--info); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-area { fill: color-mix(in srgb, var(--info) 10%, transparent); stroke: none; }
+.chart-cross { stroke: var(--fg-subtle); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.chart-dot { fill: var(--info); stroke: var(--bg-elevated); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.chart-y { position: absolute; left: 0; transform: translateY(-50%); font-size: 11px; color: var(--fg-subtle); font-variant-numeric: tabular-nums; }
+.chart-y.y100 { top: 5.3%; }
+.chart-y.y50 { top: 50%; }
+.chart-x { display: flex; justify-content: space-between; padding: 6px 0 0 40px; font-size: 11px; color: var(--fg-subtle); }
+.chart-tip {
+  position: absolute; top: 0; pointer-events: none; transform: translate(-50%, -110%); white-space: nowrap;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px; box-shadow: var(--shadow-md);
+  padding: 5px 9px; font-size: 12px; color: var(--fg-muted);
+}
+.chart-tip strong { color: var(--fg); font-variant-numeric: tabular-nums; }
+
 /* Cards ---------------------------------------------------------------------- */
 .card {
   background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius);

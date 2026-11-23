@@ -32,10 +32,15 @@ func (d *Deployer) RunCommand(ctx context.Context, w io.Writer, site store.Site,
 		"SKIFF_DOMAIN=" + site.Domain,
 		"SKIFF_PHP=" + site.PHPVersion,
 		"SKIFF_NODE=" + site.NodeVersion,
+		"SKIFF_PYTHON=" + site.PythonVersion,
 		"COMPOSER_NO_INTERACTION=1",
 		"NPM_CONFIG_UPDATE_NOTIFIER=false",
 	}
+	if site.IsPython() {
+		// Same settings the app gets (systemd loads .env for it).
+		command = "if [ -f .env ]; then set -a; . ./.env; set +a; fi\n" + command
+	}
 	script := locate(site.Domain) + "cd \"$APP\" 2>/dev/null || { echo \"The site hasn't been deployed yet.\" >&2; exit 1; }\nset -eo pipefail\n" +
-		withPHP(site.PHPVersion, withNode(site.NodeVersion, command))
+		withPython(site, withPHP(site.PHPVersion, withNode(site.NodeVersion, command)))
 	return d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Env: env, Stdin: strings.NewReader("")}, w)
 }

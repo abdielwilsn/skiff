@@ -69,7 +69,7 @@ if ! pkgs_installed certbot python3-certbot-nginx; then
     export DEBIAN_FRONTEND=noninteractive
     dpkg --configure -a || true   # finish any interrupted install first
     apt-get update -q
-    apt-get install -y -q certbot python3-certbot-nginx
+    apt_install certbot python3-certbot-nginx
 fi
 certbot --version`
 
@@ -80,7 +80,26 @@ const pkgsInstalledFn = `pkgs_installed() {
     for p in "$@"; do
         dpkg-query -W -f='${Status}' "$p" 2>/dev/null | grep -q "install ok installed" || return 1
     done
-}`
+}
+` + aptRetries
+
+// aptRetries makes apt retry downloads that fail with a temporary error (a
+// busy mirror or PPA returning 503) instead of failing the whole install.
+// apt_install also retries the whole install a few times: packages that
+// already downloaded are cached, so each pass only fetches what's missing.
+const aptRetries = `if [ -d /etc/apt/apt.conf.d ] && [ ! -f /etc/apt/apt.conf.d/80-skiff-retries ]; then
+    echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-skiff-retries
+fi
+apt_install() {
+    local i
+    for i in 1 2 3; do
+        apt-get install -y -q "$@" && return 0
+        echo "Some packages didn't download (the mirror may be busy); retrying in 20 seconds ($i/3)"
+        sleep 20
+    done
+    apt-get install -y -q "$@"
+}
+`
 
 // EnableHTTPS obtains a certificate for the site and switches it to HTTPS.
 func (d *Deployer) EnableHTTPS(ctx context.Context, w io.Writer, site store.Site, email string) error {

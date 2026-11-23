@@ -164,3 +164,38 @@ document.querySelectorAll("input[data-filter]").forEach((input) => {
     if (none) none.hidden = shown > 0;
   });
 });
+
+// Server charts: crosshair + tooltip with the nearest sample.
+document.querySelectorAll("svg.chart[data-points]").forEach((svg) => {
+  // Each point is x:y (in viewBox units), unix time, value.
+  const pts = svg.dataset.points.split(";").map((p) => p.split(":").map(Number)).filter((p) => p.length === 4);
+  if (pts.length === 0) return;
+  const cross = svg.querySelector(".chart-cross");
+  const dot = svg.querySelector(".chart-dot");
+  const tip = svg.parentElement.querySelector(".chart-tip");
+  const xs = pts.map((p) => p[0]);
+  const ys = pts.map((p) => p[1]);
+  const hide = () => { cross.hidden = dot.hidden = tip.hidden = true; };
+  svg.addEventListener("mouseleave", hide);
+  svg.addEventListener("mousemove", (e) => {
+    const r = svg.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * 640;
+    let best = 0;
+    for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - x) < Math.abs(xs[best] - x)) best = i;
+    if (!pts[best]) return;
+    cross.setAttribute("x1", xs[best]); cross.setAttribute("x2", xs[best]);
+    dot.setAttribute("cx", xs[best]); dot.setAttribute("cy", ys[best]);
+    cross.hidden = dot.hidden = tip.hidden = false;
+    const t = new Date(pts[best][2] * 1000);
+    tip.innerHTML = "";
+    const v = document.createElement("strong");
+    v.textContent = pts[best][3].toFixed(0) + "%";
+    tip.append(v, " " + svg.dataset.title + " · " + t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }));
+    const wrap = svg.parentElement.getBoundingClientRect();
+    // Keep the tooltip inside the chart near its edges.
+    const half = tip.offsetWidth / 2;
+    const left = r.left - wrap.left + (xs[best] / 640) * r.width;
+    tip.style.left = Math.max(half, Math.min(wrap.width - half, left)) + "px";
+    tip.style.top = (r.top - wrap.top + (ys[best] / 150) * r.height) + "px";
+  });
+});

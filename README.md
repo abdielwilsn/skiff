@@ -1,6 +1,6 @@
 # Skiff
 
-A tiny, self-hosted server panel for Laravel and JavaScript apps, in the spirit of Laravel Forge.
+A tiny, self-hosted server panel for Laravel, JavaScript and Python apps, in the spirit of Laravel Forge.
 Install it on a fresh Ubuntu VPS, connect GitHub, pick a repository, and Skiff
 clones it, installs dependencies, and serves it with Nginx + PHP-FPM.
 
@@ -132,6 +132,34 @@ its port. **If it doesn't start, the previous release is put back
 automatically** and the deploy is marked failed with the app's last log lines.
 Saving the `.env` restarts the app.
 
+## Python projects
+
+Pick **Django**, **FastAPI**, **Flask** or **Other Python server** on
+**New site**, and a Python version (3.11–3.14).
+
+- Python comes from [uv](https://docs.astral.sh/uv/): the first Python deploy
+  downloads the uv binary from its GitHub release (checksum-verified) into
+  `/opt/skiff/uv`, and uv installs the chosen Python into `/opt/skiff/python`.
+  Both are root-owned; no apt packages or PPAs are involved.
+- Every release gets its own `.venv`, so a rollback runs with exactly the
+  packages it was built with. The default deploy script installs from
+  `uv.lock` (`uv sync --frozen`), `requirements.txt` or `pyproject.toml`, adds
+  the app server the preset uses (gunicorn or uvicorn), and for Django runs
+  `collectstatic` (when `STATIC_ROOT` is set) and `migrate`.
+- The **start command** runs as a systemd service like a Node app, with the
+  release's `.venv` first on `PATH`, `PORT`, `HOST=127.0.0.1` and the site's
+  `.env`. For Django, `$WSGI_MODULE` is set to the package that holds
+  `wsgi.py`, so the default `gunicorn "$WSGI_MODULE" …` works without editing.
+  If a new release doesn't start, the previous one is put back automatically.
+- Nginx serves `/static/` from the release's `staticfiles/` folder (Django's
+  usual `STATIC_ROOT`) and passes anything else, including files it doesn't
+  have, to the app (so WhiteNoise keeps working).
+- Django's default SQLite database (`db.sqlite3` next to `manage.py`) lives in
+  `shared/` so it survives deploys, and it's included in backups.
+- Add your domain to Django's `ALLOWED_HOSTS` (or read it from `.env`).
+  Settings in `.env` reach the app, the deploy script and the Commands page as
+  environment variables.
+
 ## Running commands
 
 Each site has a **Commands** page (in the site's sidebar) for one-off
@@ -214,6 +242,40 @@ passwords, and delete databases (type the name to confirm).
   root-only SQLite file so the panel can show them to you.
 - Deleting a site keeps its database (and data) and just detaches it.
 - To browse a database from your computer, use an SSH tunnel to port 3306.
+
+## Backups
+
+**Backups** dumps every database on the server **every night** (03:00 server
+time by default) and **before every deploy** of a Laravel or Python site, so a
+bad migration can be undone:
+
+- MySQL databases with `mysqldump --single-transaction` (a consistent snapshot
+  without locking the app), and the SQLite databases of deployed sites
+  (`database/database.sqlite`, Django's `db.sqlite3`) with SQLite's `.backup`.
+- Files are gzipped into `/var/backups/skiff/<database>/`, readable by root only.
+  The newest 7 nightly/manual backups are kept per database (configurable), plus
+  the last 3 taken before deploys and restores.
+- **Off-site storage**: add any S3-compatible bucket (AWS S3, Cloudflare R2,
+  Backblaze B2, DigitalOcean Spaces, Hetzner, MinIO…) and every backup is also
+  uploaded to `<folder>/<server>/<database>/`. Uploads use curl's built-in AWS
+  signing, with the keys passed on stdin so they never appear in logs or
+  process lists. Saving the settings tests the connection.
+- **Restore** puts a database back to a backup. Skiff first takes a safety
+  backup of the current data, downloads the file from the bucket if the local
+  copy is gone, then replaces the database (MySQL: dropped and recreated;
+  SQLite: an atomic file swap) and restarts the site's app or workers.
+- **Download** any backup from the panel.
+
+If a backup before a deploy fails, the deploy stops (nothing changes); turn off
+"Back up before each deploy" to deploy anyway.
+
+## Server health
+
+**Server** shows CPU, memory, disk and swap use, load, uptime, a 24-hour chart
+of each (sampled once a minute, kept in memory), and whether Nginx, PHP-FPM,
+MySQL and every site process (app servers, queue workers, schedulers) are
+running. The dashboard shows the same numbers in a strip and warns when the
+disk is over 85% full, memory is over 90% used, or a service has failed.
 
 ## HTTPS for sites
 
@@ -313,8 +375,8 @@ http://localhost:8081.)
 cmd/skiff            CLI entry point (serve, reset-admin, version)
 internal/executor    Executor interface: Local runs bash on this box; DryRun prints.
                      A future SSH/agent executor lets one panel manage many servers.
-internal/laravel     Provisioning script, Nginx template, deploy pipeline, HTTPS (certbot),
-                     panel reverse proxy, MySQL
+internal/laravel     Provisioning, Nginx templates, deploy pipeline, PHP/Node/Python runtimes,
+                     HTTPS (certbot), panel reverse proxy, MySQL, backups, server health
 internal/github      OAuth flow, repo listing, token-in-env git auth
 internal/jobs        Sequential background job runner with file logs
 internal/store       SQLite schema and queries
@@ -332,8 +394,9 @@ scripts/install.sh   systemd installer
   internet. Until then, prefer an SSH tunnel. If you run your own reverse
   proxy instead, pass `--url https://panel.example.com` and Skiff leaves the
   panel's address to you.
-- The GitHub token and OAuth secret are stored in `/var/lib/skiff/skiff.db`
-  (mode 0700 directory, root only).
+- The GitHub token, OAuth secret and off-site storage keys are stored in
+  `/var/lib/skiff/skiff.db` (mode 0700 directory, root only).
+- Backups in `/var/backups/skiff` are root-only (directories 0700, files 0600).
 
 ## Locked out?
 

@@ -10,6 +10,18 @@
   </div>
 </div>
 
+{{range $d.Alerts}}<div class="flash flash-{{.Tone}}" role="status">{{template "i-alert"}}<div><strong>{{if eq .Tone "err"}}Critical:{{else}}Warning:{{end}}</strong> {{.Msg}} <a href="/server">Server details</a></div></div>{{end}}
+
+{{with $d.Health}}
+<a class="server-strip card" href="/server">
+  <span class="strip-item"><span class="stat-label">CPU</span><strong>{{printf "%.0f" .CPUPercent}}%</strong></span>
+  <span class="strip-item"><span class="stat-label">Memory</span><strong>{{printf "%.0f" .MemUsedPercent}}%</strong></span>
+  <span class="strip-item"><span class="stat-label">Disk</span><strong {{if ge .DiskUsedPercent 85.0}}class="text-warn"{{end}}>{{printf "%.0f" .DiskUsedPercent}}%</strong></span>
+  <span class="strip-item"><span class="stat-label">Last backup</span><strong>{{with $d.LastBackup}}{{if eq .Status "ok"}}{{ago .CreatedAt}}{{else}}<span class="text-warn">{{backupReason .Reason}} failed</span>{{end}}{{else}}{{if $d.BackupsOff}}Off{{else}}Tonight{{end}}{{end}}</strong></span>
+  <span class="strip-more">Server {{template "i-arrow"}}</span>
+</a>
+{{end}}
+
 {{if not $d.Provisioned}}
 <section class="card" id="provision">
   <div class="card-body callout">

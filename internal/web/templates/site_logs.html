@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>Logs</h1>
-    <p class="page-sub">{{if $s.IsLaravel}}Queue workers, scheduler and <code>storage/logs/laravel.log</code>{{else if $s.IsNode}}Output of the app process{{else}}Static sites have no running processes; deploy logs are under Activity{{end}}, newest at the bottom.</p>
+    <p class="page-sub">{{if $s.IsLaravel}}Queue workers, scheduler and <code>storage/logs/laravel.log</code>{{else if $s.HasApp}}Output of the app process{{else}}Static sites have no running processes; deploy logs are under Activity{{end}}, newest at the bottom.</p>
   </div>
   <div class="actions"><a class="btn" href="/sites/{{$s.ID}}/logs">{{template "i-refresh"}} Refresh</a></div>
 </div>

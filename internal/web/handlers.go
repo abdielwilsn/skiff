@@ -37,6 +37,10 @@ type dashboardData struct {
 	Sites        []store.Site
 	Jobs         []store.Job
 	GitHubLogin  string
+	Health       *laravel.Health // latest one-minute sample; nil until there is one
+	Alerts       []healthAlert
+	LastBackup   *store.Backup
+	BackupsOff   bool
 }
 
 func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, sess store.Session) {
@@ -54,6 +58,12 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, sess store.Se
 		return
 	}
 	d.GitHubLogin, _ = s.st.Setting(keyGitHubLogin)
+	d.Health, _ = s.healthSnapshot()
+	d.Alerts = healthAlerts(d.Health)
+	if list, err := s.st.Backups(1); err == nil && len(list) > 0 {
+		d.LastBackup = &list[0]
+	}
+	d.BackupsOff = !s.backupSettings().Enabled
 	s.render(w, r, "dashboard", http.StatusOK, pageFor(sess, "Sites", "sites", d))
 }
 
@@ -152,6 +162,8 @@ type newSiteData struct {
 	PHPVersions                 []string
 	Node                        string
 	NodeVersions                []string
+	Python                      string
+	PythonVersions              []string
 	NodeSet                     bool // the form was submitted, so Node "" means "none"
 	Framework                   string
 	Frameworks                  []laravel.Framework
@@ -169,6 +181,10 @@ func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 	d.NodeVersions = laravel.NodeVersions
 	if !d.NodeSet {
 		d.Node = laravel.DefaultNode
+	}
+	d.PythonVersions = laravel.PythonVersions
+	if d.Python == "" {
+		d.Python = laravel.DefaultPython
 	}
 	d.Frameworks = laravel.Frameworks
 	if d.Framework == "" {
@@ -200,6 +216,7 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		PHP:      r.FormValue("php"),
 		Node:     r.FormValue("node"),
 		NodeSet:  true,
+		Python:   r.FormValue("python"),
 
 		Framework:    r.FormValue("framework"),
 		StartCommand: strings.TrimSpace(r.FormValue("start_command")),
@@ -211,7 +228,12 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 	fw := laravel.FrameworkByID(d.Framework)
 	d.Framework = fw.ID
 	if fw.Kind != store.KindLaravel && !laravel.ValidPHP(d.PHP) {
-		d.PHP = laravel.DefaultPHP // unused by JS projects
+		d.PHP = laravel.DefaultPHP // unused by other project types
+	}
+	if fw.Kind == store.KindPython {
+		d.Node = "" // Python apps don't build with Node
+	} else {
+		d.Python = ""
 	}
 	if d.StartCommand == "" {
 		d.StartCommand = fw.Start
@@ -232,9 +254,11 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		d.Error = "Choose a Node.js version."
 	case d.Domain == s.panelHTTPSDomain():
 		d.Error = d.Domain + " is where this panel is served. Use a different domain for the site."
-	case fw.Kind != store.KindLaravel && d.Node == "":
+	case (fw.Kind == store.KindNode || fw.Kind == store.KindStatic) && d.Node == "":
 		d.Error = fw.Name + " needs Node.js; pick a version."
-	case fw.Kind == store.KindNode && !laravel.ValidStartCommand(d.StartCommand):
+	case fw.Kind == store.KindPython && !laravel.ValidPython(d.Python):
+		d.Error = "Choose a Python version."
+	case (fw.Kind == store.KindNode || fw.Kind == store.KindPython) && !laravel.ValidStartCommand(d.StartCommand):
 		d.Error = "Enter the command that starts your app, e.g. npm run start."
 	case fw.Kind == store.KindStatic && !laravel.ValidOutputDir(d.OutputDir):
 		d.Error = "Enter the folder your build writes to, e.g. dist (or . for the repository root)."
@@ -242,11 +266,11 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 	if d.Error == "" {
 		site := store.Site{
 			Domain: d.Domain, Repo: d.Repo, Branch: d.Branch,
-			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: laravel.DefaultDeployScriptFor(fw.Kind),
-			Kind: fw.Kind,
+			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: fw.DeployScript(),
+			Kind: fw.Kind, PythonVersion: d.Python,
 		}
 		switch fw.Kind {
-		case store.KindNode:
+		case store.KindNode, store.KindPython:
 			site.StartCommand = d.StartCommand
 		case store.KindStatic:
 			site.OutputDir = d.OutputDir
@@ -305,6 +329,10 @@ func (s *Server) startDeploy(site store.Site, reason string) (int64, error) {
 			if db, err := s.st.DatabaseForSite(siteID); err == nil && db.Status == store.DBPending {
 				sp := laravel.SpecOf(db)
 				spec, pendingDB = &sp, db.ID
+			}
+			// Back up the site's databases before its migrations run.
+			if err := s.backupBeforeDeploy(ctx, log, cur); err != nil {
+				return err
 			}
 			return s.deployer.Deploy(ctx, log, cur, s.githubToken(), spec)
 		},
@@ -366,13 +394,14 @@ type siteData struct {
 	Path      string
 	NginxPath string
 
-	Database     *store.Database
-	Releases     []laravel.Release
-	ReleasesErr  string
-	Process      laravel.ProcessStatus
-	MaxWorkers   int
-	PHPVersions  []string
-	NodeVersions []string
+	Database       *store.Database
+	Releases       []laravel.Release
+	ReleasesErr    string
+	Process        laravel.ProcessStatus
+	MaxWorkers     int
+	PHPVersions    []string
+	NodeVersions   []string
+	PythonVersions []string
 
 	HookBase        string // public HTTPS origin for webhooks; "" = not available
 	GitHubConnected bool
@@ -397,8 +426,9 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	}
 	d.PHPVersions = laravel.PHPVersions
 	d.NodeVersions = laravel.NodeVersions
+	d.PythonVersions = laravel.PythonVersions
 	d.MaxWorkers = laravel.MaxWorkers
-	if site.DeployedAt != nil && !s.cfg.DryRun && (site.IsNode() || site.WorkerCount > 0 || site.Scheduler) {
+	if site.DeployedAt != nil && !s.cfg.DryRun && (site.HasApp() || site.WorkerCount > 0 || site.Scheduler) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		d.Process, _ = s.deployer.Status(ctx, site)
 		cancel()
@@ -606,6 +636,28 @@ func (s *Server) setNode(w http.ResponseWriter, r *http.Request, _ store.Session
 	redirect(w, r, s.siteURL(site))
 }
 
+// setPython changes a Python app's interpreter; it takes effect on the next deploy.
+func (s *Server) setPython(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	v := r.FormValue("python")
+	if !site.IsPython() || !laravel.ValidPython(v) {
+		setFlash(w, "err", "Choose a Python version.")
+		redirect(w, r, s.siteURL(site))
+		return
+	}
+	if err := s.st.SetSitePython(site.ID, v); err != nil {
+		s.serverError(w, err)
+		return
+	}
+	if v != site.PythonVersion {
+		setFlash(w, "ok", "Python "+v+" selected. Click Deploy to build a release with it.")
+	}
+	redirect(w, r, s.siteURL(site))
+}
+
 // rollback makes an earlier release of the site live again.
 func (s *Server) rollback(w http.ResponseWriter, r *http.Request, _ store.Session) {
 	site, ok := s.siteFromPath(w, r)
@@ -701,11 +753,11 @@ func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request, _ store.Session
 		return
 	}
 	// Long-running processes read the environment when they start.
-	if site.DeployedAt != nil && (site.IsNode() || site.WorkerCount > 0) {
+	if site.DeployedAt != nil && (site.HasApp() || site.WorkerCount > 0) {
 		setFlash(w, "ok", ".env saved. Restarting so it takes effect.")
 		s.enqueueSiteJob(w, r, site, "restart", "Restart "+site.Domain+" after .env change",
 			func(ctx context.Context, log io.Writer, cur store.Site) error {
-				if cur.IsNode() {
+				if cur.HasApp() {
 					return s.deployer.StartApp(ctx, log, cur)
 				}
 				return s.deployer.ApplyLaravelProcesses(ctx, log, cur)

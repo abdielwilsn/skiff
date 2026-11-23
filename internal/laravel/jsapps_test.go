@@ -21,7 +21,7 @@ var staticSite = store.Site{ID: 2, Domain: "spa.example.com", Repo: "o/spa", Bra
 func TestFrameworkPresetsAreValid(t *testing.T) {
 	for _, f := range Frameworks {
 		switch f.Kind {
-		case store.KindNode:
+		case store.KindNode, store.KindPython:
 			if !ValidStartCommand(f.Start) {
 				t.Errorf("%s: invalid start command %q", f.ID, f.Start)
 			}

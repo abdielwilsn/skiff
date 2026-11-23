@@ -132,7 +132,7 @@ echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.R
 		return fmt.Errorf("configure nginx: %w", err)
 	}
 	switch {
-	case site.IsNode():
+	case site.HasApp():
 		if err := d.StartApp(ctx, w, site); err != nil {
 			// The new release doesn't start: put the previous one back.
 			if prev != "" {
@@ -275,6 +275,16 @@ fi
 [ -f "$SH/.env" ] && chmod 640 "$SH/.env"
 if [ -f "$SH/.env" ]; then rm -f .env && ln -s "$SH/.env" .env; fi
 
+# Django's default SQLite database (BASE_DIR / "db.sqlite3") lives in shared/
+# so it survives deploys, unless the repository ships its own.
+if [ "$KIND" = python ] && [ -f manage.py ] && [ ! -e db.sqlite3 ]; then
+    if [ ! -f "$SH/db.sqlite3" ]; then
+        echo "Creating shared/db.sqlite3 for Django's default SQLite database"
+        touch "$SH/db.sqlite3"
+    fi
+    ln -s "$SH/db.sqlite3" db.sqlite3
+fi
+
 if [ "$KIND" != laravel ]; then echo "OK"; exit 0; fi
 [ -f artisan ] || echo "Warning: no artisan file found; this does not look like a Laravel app."
 
@@ -309,11 +319,16 @@ echo "OK"`, q(dir), q(rel), site.Domain, kind)
 		}
 	}
 
-	if site.IsLaravel() {
+	switch {
+	case site.IsLaravel():
 		if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
 			return err
 		}
-	} else if site.NodeVersion == "" {
+	case site.IsPython():
+		if err := d.EnsurePython(ctx, w, site.PythonVersion); err != nil {
+			return err
+		}
+	case site.NodeVersion == "":
 		return fmt.Errorf("choose a Node.js version for this site (Runtime card)")
 	}
 	if err := d.EnsureNode(ctx, w, rel, site.NodeVersion); err != nil {
@@ -329,6 +344,7 @@ echo "OK"`, q(dir), q(rel), site.Domain, kind)
 		"SKIFF_DOMAIN=" + site.Domain,
 		"SKIFF_PHP=" + site.PHPVersion,
 		"SKIFF_NODE=" + site.NodeVersion,
+		"SKIFF_PYTHON=" + site.PythonVersion,
 		"COMPOSER_NO_INTERACTION=1",
 		"NPM_CONFIG_UPDATE_NOTIFIER=false",
 		"NPM_CONFIG_FUND=false",
@@ -337,10 +353,13 @@ echo "OK"`, q(dir), q(rel), site.Domain, kind)
 	if site.IsLaravel() {
 		banner = `echo "Using PHP $(php -r 'echo PHP_VERSION;')"` + "\n"
 	}
+	if site.IsPython() {
+		banner += `echo "Using $(uv --version) with Python $(uv python find "$SKIFF_PYTHON")"` + "\n"
+	}
 	if site.NodeVersion != "" {
 		banner += `if command -v node >/dev/null 2>&1; then echo "Using Node.js $(node -v)"; fi` + "\n"
 	}
-	script := "set -eo pipefail\n" + withPHP(site.PHPVersion, withNode(site.NodeVersion, banner+site.DeployScript))
+	script := "set -eo pipefail\n" + withPython(site, withPHP(site.PHPVersion, withNode(site.NodeVersion, banner+site.DeployScript)))
 	if err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser, Dir: rel, Env: env}, w); err != nil {
 		return fmt.Errorf("deploy script: %w", err)
 	}
@@ -448,7 +467,7 @@ if [ -f bootstrap/cache/config.php ]; then php artisan config:cache; fi`, shell.
 		return err
 	}
 	switch {
-	case site.IsNode():
+	case site.HasApp():
 		if err := d.StartApp(ctx, w, site); err != nil {
 			return err
 		}

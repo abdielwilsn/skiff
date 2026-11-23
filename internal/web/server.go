@@ -3,6 +3,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
@@ -52,6 +53,9 @@ type Config struct {
 
 	ACMEServer   string // optional ACME directory URL (e.g. Let's Encrypt staging)
 	ACMEInsecure bool   // skip TLS verification of ACMEServer (local test servers only)
+
+	// Context stops background work (scheduled backups, health sampling).
+	Context context.Context
 }
 
 type Server struct {
@@ -70,6 +74,10 @@ type Server struct {
 	repoToken string
 	repoAt    time.Time
 	repoList  []github.Repo
+
+	healthMu   sync.Mutex
+	healthNow  *laravel.Health // latest sample
+	healthHist []healthSample  // last 24 hours, one a minute
 
 	panelMu     sync.Mutex
 	panelDomain string    // cached keyPanelDomain
@@ -140,6 +148,12 @@ func New(cfg Config) (*Server, error) {
 		slog.Info("upgraded sites to the new default deploy script", "sites", n)
 	}
 	s.routes()
+	ctx := cfg.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go s.backupLoop(ctx)
+	go s.healthLoop(ctx)
 	return s, nil
 }
 
@@ -172,6 +186,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sites/{id}/script", s.auth(s.saveScript))
 	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
 	m.HandleFunc("POST /sites/{id}/node", s.auth(s.setNode))
+	m.HandleFunc("POST /sites/{id}/python", s.auth(s.setPython))
 	m.HandleFunc("POST /sites/{id}/autodeploy", s.auth(s.enableAutoDeploy))
 	m.HandleFunc("POST /sites/{id}/autodeploy/disable", s.auth(s.disableAutoDeploy))
 
@@ -195,6 +210,16 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /jobs/{id}", s.auth(s.jobPage))
 	m.HandleFunc("GET /jobs/{id}/log", s.auth(s.jobLog))
+
+	m.HandleFunc("GET /server", s.auth(s.serverPage))
+	m.HandleFunc("GET /backups", s.auth(s.backupsPage))
+	m.HandleFunc("POST /backups/run", s.auth(s.runBackupNow))
+	m.HandleFunc("POST /backups/settings", s.auth(s.saveBackupSettings))
+	m.HandleFunc("POST /backups/storage", s.auth(s.saveBackupStorage))
+	m.HandleFunc("POST /backups/storage/remove", s.auth(s.removeBackupStorage))
+	m.HandleFunc("POST /backups/{id}/restore", s.auth(s.restoreBackup))
+	m.HandleFunc("POST /backups/{id}/delete", s.auth(s.deleteBackupHandler))
+	m.HandleFunc("GET /backups/{id}/download", s.auth(s.downloadBackup))
 
 	m.HandleFunc("GET /settings", s.auth(s.settingsPage))
 	m.HandleFunc("POST /settings/github", s.auth(s.saveGitHubApp))
@@ -290,6 +315,30 @@ func (s *Server) loadTemplates() error {
 		"statusLabel": func(s string) string { return statusOf(s).label },
 		"statusTone":  func(s string) string { return statusOf(s).tone },
 		"statusPulse": func(s string) bool { return statusOf(s).pulse },
+		"bytes":       humanBytes,
+		"sub64":       func(a, b int64) int64 { return a - b },
+		"duration":    humanDuration,
+		// backupStatus maps a backup's status onto the job status styles.
+		"backupStatus": func(s string) string {
+			switch s {
+			case store.BackupOK:
+				return store.JobSuccess
+			case store.BackupRunning:
+				return store.JobRunning
+			}
+			return store.JobFailed
+		},
+		"backupReason": func(r string) string {
+			switch r {
+			case store.BackupScheduled:
+				return "Nightly"
+			case store.BackupDeploy:
+				return "Before deploy"
+			case store.BackupRestore:
+				return "Before restore"
+			}
+			return "Manual"
+		},
 		// dict builds a map for passing several values to a partial.
 		"dict": func(kv ...any) map[string]any {
 			m := make(map[string]any, len(kv)/2)
@@ -413,6 +462,31 @@ func statusOf(s string) statusStyle {
 		return statusStyle{"Failed", "err", false}
 	}
 	return statusStyle{s, "neutral", false}
+}
+
+// humanDuration formats an uptime like "12 days" or "3 h 20 min".
+func humanDuration(d time.Duration) string {
+	switch {
+	case d >= 48*time.Hour:
+		return fmt.Sprintf("%d days", int(d.Hours()/24))
+	case d >= time.Hour:
+		return fmt.Sprintf("%d h %d min", int(d.Hours()), int(d.Minutes())%60)
+	}
+	return fmt.Sprintf("%d min", int(d.Minutes()))
+}
+
+// humanBytes formats a size like "4.2 MB".
+func humanBytes(n int64) string {
+	const unit = 1024
+	if n < unit {
+		return fmt.Sprintf("%d B", n)
+	}
+	div, exp := int64(unit), 0
+	for m := n / unit; m >= unit; m /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(n)/float64(div), "KMGTPE"[exp])
 }
 
 // initial returns the first letter or digit of s, for monogram avatars.

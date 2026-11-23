@@ -114,7 +114,7 @@ func serve(args []string) error {
 	handler, err := web.New(web.Config{
 		Store: st, Runner: runner, Exec: ex,
 		DataDir: *dataDir, ListenAddr: *addr, BaseURL: *baseURL, DryRun: *dryRun, Version: version,
-		ACMEServer: *acmeServer, ACMEInsecure: acmeInsecure,
+		ACMEServer: *acmeServer, ACMEInsecure: acmeInsecure, Context: ctx,
 	})
 	if err != nil {
 		return err

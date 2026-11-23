@@ -50,6 +50,18 @@
           </form>
         </dd>
         {{end}}
+        {{if $s.IsPython}}
+        <dt>Python</dt>
+        <dd>
+          <form method="post" action="/sites/{{$s.ID}}/python" class="inline-form">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <select name="python" aria-label="Python version">
+              {{range $d.PythonVersions}}<option value="{{.}}" {{if eq . $s.PythonVersion}}selected{{end}}>Python {{.}}</option>{{end}}
+            </select>
+            <button class="btn small">Save</button>
+          </form>
+        </dd>
+        {{else}}
         <dt>Node.js</dt>
         <dd>
           <form method="post" action="/sites/{{$s.ID}}/node" class="inline-form">
@@ -61,7 +73,8 @@
             <button class="btn small">Save</button>
           </form>
         </dd>
-        {{if $s.IsNode}}
+        {{end}}
+        {{if $s.HasApp}}
         <dt>App</dt>
         <dd>{{if $s.DeployedAt}}{{if eq $d.Process.App "active"}}<span class="status tone-ok"><i></i>Running on port {{$s.Port}}</span>{{else if $d.Process.App}}<span class="status tone-err"><i></i>{{$d.Process.App}}</span>{{else}}<span class="muted">Port {{$s.Port}}</span>{{end}}{{else}}<span class="muted">Starts after the first deploy (port {{$s.Port}})</span>{{end}}</dd>
         {{end}}
@@ -119,9 +132,13 @@
   <form method="post" action="/sites/{{$s.ID}}/app" class="card">
     <input type="hidden" name="csrf" value="{{$csrf}}">
     <div class="card-body stack">
-      <h2>{{if $s.IsNode}}App process{{else}}Static output{{end}}</h2>
-      {{if $s.IsNode}}
+      <h2>{{if $s.HasApp}}App process{{else}}Static output{{end}}</h2>
+      {{if $s.HasApp}}
+      {{if $s.IsPython}}
+      <p class="muted">Skiff runs this command in the live release as a background service (restarted if it crashes and after every deploy) with the release's <code>.venv</code> first on <code>PATH</code>, <code>PORT={{$s.Port}}</code> and <code>HOST=127.0.0.1</code>, plus your <code>.env</code>. <code>$WSGI_MODULE</code> is set to the folder with <code>wsgi.py</code>. Nginx forwards <code>{{$s.Domain}}</code> to it and serves <code>/static/</code> from <code>staticfiles/</code>. For Django, add <code>{{$s.Domain}}</code> to <code>ALLOWED_HOSTS</code>. If a new release doesn't start, the previous one is put back automatically.</p>
+      {{else}}
       <p class="muted">Skiff runs this command in the live release as a background service (restarted if it crashes and after every deploy) with <code>PORT={{$s.Port}}</code>, <code>HOST=127.0.0.1</code> and <code>NODE_ENV=production</code>, plus your <code>.env</code>. Nginx forwards <code>{{$s.Domain}}</code> to it. If a new release doesn't start, the previous one is put back automatically.</p>
+      {{end}}
       <label>Start command
         <input name="start_command" value="{{$s.StartCommand}}" required spellcheck="false" autocomplete="off">
       </label>
@@ -133,9 +150,9 @@
       {{end}}
     </div>
     <div class="card-footer">
-      <span>{{if $s.IsNode}}Saving restarts the app.{{else}}Saving updates Nginx right away.{{end}}</span>
+      <span>{{if $s.HasApp}}Saving restarts the app.{{else}}Saving updates Nginx right away.{{end}}</span>
       <div class="actions">
-        {{if and $s.IsNode $s.DeployedAt}}<button class="btn ghost" formaction="/sites/{{$s.ID}}/restart" {{if $d.Busy}}disabled{{end}}>Restart</button>{{end}}
+        {{if and $s.HasApp $s.DeployedAt}}<button class="btn ghost" formaction="/sites/{{$s.ID}}/restart" {{if $d.Busy}}disabled{{end}}>Restart</button>{{end}}
         <button class="btn primary" {{if $d.Busy}}disabled{{end}}>Save</button>
       </div>
     </div>

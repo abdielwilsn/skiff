@@ -11,25 +11,30 @@ import (
 // fills in sensible defaults, which stay editable.
 type Framework struct {
 	ID, Name string
-	Kind     string // store.KindLaravel, KindNode or KindStatic
-	Start    string // Node apps: start command
+	Kind     string // store.KindLaravel, KindNode, KindStatic or KindPython
+	Start    string // Node/Python apps: start command
 	Output   string // static sites: build output folder
+	Server   string // Python apps: app server package the deploy script installs
 }
 
 // Frameworks offered on the New site form, in display order.
 var Frameworks = []Framework{
-	{"laravel", "Laravel", store.KindLaravel, "", ""},
-	{"nextjs", "Next.js", store.KindNode, "npm run start", ""},
-	{"nuxt", "Nuxt", store.KindNode, "node .output/server/index.mjs", ""},
-	{"sveltekit", "SvelteKit (adapter-node)", store.KindNode, "node build", ""},
-	{"remix", "Remix / React Router", store.KindNode, "npm run start", ""},
-	{"astro-ssr", "Astro (server, @astrojs/node)", store.KindNode, "node ./dist/server/entry.mjs", ""},
-	{"node", "Express, Fastify, NestJS or other Node server", store.KindNode, "npm run start", ""},
-	{"vite", "Vite: React, Vue, Svelte, Solid… (static)", store.KindStatic, "", "dist"},
-	{"astro", "Astro (static)", store.KindStatic, "", "dist"},
-	{"cra", "Create React App", store.KindStatic, "", "build"},
-	{"next-export", "Next.js static export", store.KindStatic, "", "out"},
-	{"html", "Plain HTML (no build)", store.KindStatic, "", "."},
+	{"laravel", "Laravel", store.KindLaravel, "", "", ""},
+	{"nextjs", "Next.js", store.KindNode, "npm run start", "", ""},
+	{"nuxt", "Nuxt", store.KindNode, "node .output/server/index.mjs", "", ""},
+	{"sveltekit", "SvelteKit (adapter-node)", store.KindNode, "node build", "", ""},
+	{"remix", "Remix / React Router", store.KindNode, "npm run start", "", ""},
+	{"astro-ssr", "Astro (server, @astrojs/node)", store.KindNode, "node ./dist/server/entry.mjs", "", ""},
+	{"node", "Express, Fastify, NestJS or other Node server", store.KindNode, "npm run start", "", ""},
+	{"vite", "Vite: React, Vue, Svelte, Solid… (static)", store.KindStatic, "", "dist", ""},
+	{"astro", "Astro (static)", store.KindStatic, "", "dist", ""},
+	{"cra", "Create React App", store.KindStatic, "", "build", ""},
+	{"next-export", "Next.js static export", store.KindStatic, "", "out", ""},
+	{"html", "Plain HTML (no build)", store.KindStatic, "", ".", ""},
+	{"django", "Django", store.KindPython, `gunicorn "$WSGI_MODULE" --bind "$HOST:$PORT" --workers 2 --access-logfile -`, "", "gunicorn"},
+	{"fastapi", "FastAPI", store.KindPython, `uvicorn main:app --host "$HOST" --port "$PORT" --workers 2`, "", "uvicorn"},
+	{"flask", "Flask", store.KindPython, `gunicorn app:app --bind "$HOST:$PORT" --workers 2 --access-logfile -`, "", "gunicorn"},
+	{"python", "Other Python server", store.KindPython, "python main.py", "", ""},
 }
 
 // FrameworkByID returns the preset with this id, or the Laravel one.
@@ -74,10 +79,21 @@ fi
 
 // DefaultDeployScriptFor returns the default deploy script for a site kind.
 func DefaultDeployScriptFor(kind string) string {
-	if kind == store.KindNode || kind == store.KindStatic {
+	switch kind {
+	case store.KindNode, store.KindStatic:
 		return DefaultJSDeployScript
+	case store.KindPython:
+		return pythonDeployScript("")
 	}
 	return DefaultDeployScript
+}
+
+// DeployScript is the default deploy script for a site created from this preset.
+func (f Framework) DeployScript() string {
+	if f.Kind == store.KindPython {
+		return pythonDeployScript(f.Server)
+	}
+	return DefaultDeployScriptFor(f.Kind)
 }
 
 var (
@@ -100,6 +116,7 @@ func ValidOutputDir(dir string) bool {
 }
 
 // ValidStartCommand accepts one line of shell; it runs as the site user.
+// It runs through bash, so "$PORT" and "$HOST" can be used in it.
 func ValidStartCommand(cmd string) bool {
 	cmd = strings.TrimSpace(cmd)
 	return cmd != "" && len(cmd) <= 500 && !strings.ContainsAny(cmd, "\r\n")

@@ -45,8 +45,10 @@
     {{else}}
     <nav class="sb-nav" aria-label="Main">
       <a class="sb-link{{if eq .Nav "sites"}} active{{end}}" href="/">{{template "i-grid"}}<span>Sites</span></a>
+      <a class="sb-link{{if eq .Nav "server"}} active{{end}}" href="/server">{{template "i-activity"}}<span>Server</span></a>
       <a class="sb-link{{if eq .Nav "repos"}} active{{end}}" href="/repos">{{template "i-github"}}<span>Repositories</span></a>
       <a class="sb-link{{if eq .Nav "databases"}} active{{end}}" href="/databases">{{template "i-db"}}<span>Databases</span></a>
+      <a class="sb-link{{if eq .Nav "backups"}} active{{end}}" href="/backups">{{template "i-archive"}}<span>Backups</span></a>
       <a class="sb-link{{if eq .Nav "settings"}} active{{end}}" href="/settings">{{template "i-settings"}}<span>Settings</span></a>
     </nav>
     <div class="sb-label">Resources</div>
@@ -172,3 +174,6 @@
 {{define "i-tag"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.5"/></svg>{{end}}
 {{define "i-chevrons"}}<svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 9 4-4 4 4M8 15l4 4 4-4"/></svg>{{end}}
 {{define "i-slash"}}<svg class="crumb-slash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M16 3 8 21"/></svg>{{end}}
+{{define "i-archive"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="5" rx="1.5"/><path d="M5 9v9a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V9M10 13h4"/></svg>{{end}}
+{{define "i-cloud"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 18a4.5 4.5 0 0 1-.6-8.96A6 6 0 0 1 18 9.5a4 4 0 0 1-.5 8.5z"/></svg>{{end}}
+{{define "i-activity"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>{{end}}

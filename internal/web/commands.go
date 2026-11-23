@@ -25,10 +25,24 @@ var jsCommandPresets = []commandPreset{
 	{"Disk usage", "du -sh . node_modules 2>/dev/null", false},
 }
 
+var pythonCommandPresets = []commandPreset{
+	{"Python version", "python --version && uv --version", false},
+	{"Installed packages", "uv pip list", false},
+	{"Outdated packages", "uv pip list --outdated", false},
+	{"Django migrate", "python manage.py migrate --noinput", false},
+	{"Django migrations", "python manage.py showmigrations", false},
+	{"Django check", "python manage.py check --deploy", false},
+	{"Collect static", "python manage.py collectstatic --noinput", false},
+	{"Disk usage", "du -sh . .venv 2>/dev/null", false},
+}
+
 // presetsFor returns the one-click commands for a site's project type.
 func presetsFor(site store.Site) []commandPreset {
-	if site.IsLaravel() {
+	switch {
+	case site.IsLaravel():
 		return commandPresets
+	case site.IsPython():
+		return pythonCommandPresets
 	}
 	return jsCommandPresets
 }

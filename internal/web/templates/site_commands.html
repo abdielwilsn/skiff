@@ -4,7 +4,7 @@
 <div class="page-head">
   <div>
     <h1>Commands</h1>
-    <p class="page-sub">Run Artisan or shell commands in <code>{{$d.Site.Domain}}</code>'s directory, as the site user, with {{if $s.IsLaravel}}PHP {{$s.PHPVersion}}{{with $s.NodeVersion}} and {{end}}{{end}}{{with $s.NodeVersion}}Node {{.}}{{end}}.</p>
+    <p class="page-sub">Run Artisan or shell commands in <code>{{$d.Site.Domain}}</code>'s directory, as the site user, with {{if $s.IsLaravel}}PHP {{$s.PHPVersion}}{{with $s.NodeVersion}} and {{end}}{{end}}{{with $s.NodeVersion}}Node {{.}}{{end}}{{if $s.IsPython}}Python {{$s.PythonVersion}} and the release's virtualenv{{end}}.</p>
   </div>
 </div>
 

@@ -17,7 +17,7 @@ import (
 //
 //	skiff-<domain>-worker@N.service   Laravel queue workers (N = 1..count)
 //	skiff-<domain>-schedule.timer     Laravel scheduler, every minute
-//	skiff-<domain>-app.service        Node.js app server
+//	skiff-<domain>-app.service        Node.js or Python app server
 //
 // All run as the site user from the live release ("current").
 
@@ -34,6 +34,9 @@ func runtimePath(site store.Site) string {
 	var parts []string
 	if ValidPHP(site.PHPVersion) && site.IsLaravel() {
 		parts = append(parts, phpShimDir(site.PHPVersion))
+	}
+	if site.IsPython() {
+		parts = append(parts, SitePath(site.Domain)+"/current/.venv/bin", uvDir)
 	}
 	if site.NodeVersion != "" && ValidNode(site.NodeVersion) {
 		parts = append(parts, nodeDir(site.NodeVersion)+"/bin")
@@ -142,11 +145,11 @@ echo "Workers running: $(systemctl list-units --plain --no-legend --state=active
 	return d.run(ctx, w, script, executor.Options{})
 }
 
-// StartApp writes a Node app's start script and unit, (re)starts it, and
-// waits until it answers on its port.
+// StartApp writes a Node or Python app's start script and unit, (re)starts
+// it, and waits until it answers on its port.
 func (d *Deployer) StartApp(ctx context.Context, w io.Writer, site store.Site) error {
-	if !site.IsNode() || site.Port <= 0 {
-		return fmt.Errorf("not a Node.js app")
+	if !site.HasApp() || site.Port <= 0 {
+		return fmt.Errorf("not an app with its own server")
 	}
 	if !ValidStartCommand(site.StartCommand) {
 		return fmt.Errorf("set a start command for the app")
@@ -154,13 +157,16 @@ func (d *Deployer) StartApp(ctx context.Context, w io.Writer, site store.Site) e
 	step(w, "Starting the app: %s", site.StartCommand)
 	// The start script exports PORT/HOST last, so a PORT in .env can't move the
 	// app away from the port Nginx proxies to.
+	runtime := `export NODE_ENV="${NODE_ENV:-production}"` + "\n"
+	if site.IsPython() {
+		runtime = fmt.Sprintf("export VIRTUAL_ENV=%s/current/.venv PYTHONUNBUFFERED=1\n", SitePath(site.Domain)) + detectWSGI
+	}
 	start := fmt.Sprintf(`#!/bin/bash
 # Managed by Skiff: starts %[1]s
 export PATH=%[2]s
-export NODE_ENV="${NODE_ENV:-production}"
-export PORT=%[3]d HOST=127.0.0.1 HOSTNAME=127.0.0.1
+%[5]sexport PORT=%[3]d HOST=127.0.0.1 HOSTNAME=127.0.0.1
 exec %[4]s
-`, site.Domain, runtimePath(site), site.Port, strings.TrimSpace(site.StartCommand))
+`, site.Domain, runtimePath(site), site.Port, strings.TrimSpace(site.StartCommand), runtime)
 	script := locate(site.Domain) + fmt.Sprintf(`mkdir -p /usr/local/lib/skiff
 cat > %[1]s
 chmod 755 %[1]s
@@ -215,7 +221,7 @@ echo "Stopped background processes"`, p, unitDir, appStartScript(domain))
 
 // ProcessStatus is the live state of a site's background processes.
 type ProcessStatus struct {
-	App              string // systemd state of the Node app ("active", "failed", …)
+	App              string // systemd state of the app server ("active", "failed", …)
 	WorkersRunning   int
 	SchedulerEnabled bool
 }
@@ -267,12 +273,12 @@ fi`, p)
 }
 
 // ApplyAppSettings re-applies a site's Nginx config (e.g. a static site's
-// output folder) and, for a Node app, restarts it with its start command.
+// output folder) and, for a Node or Python app, restarts it with its start command.
 func (d *Deployer) ApplyAppSettings(ctx context.Context, w io.Writer, site store.Site) error {
 	if err := d.configureNginx(ctx, w, site); err != nil {
 		return err
 	}
-	if site.IsNode() {
+	if site.HasApp() {
 		return d.StartApp(ctx, w, site)
 	}
 	return nil

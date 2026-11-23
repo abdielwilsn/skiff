@@ -1,0 +1,181 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$csrf := .CSRF}}
+<div class="page-head">
+  <div>
+    <h1>Backups</h1>
+    <p class="page-sub">Your databases, dumped {{if $d.Settings.Enabled}}every night at {{$d.Settings.Time}}{{else}}on demand{{end}}{{if $d.Settings.BeforeDeploy}} and before every deploy{{end}}.</p>
+  </div>
+  <div class="actions">
+    <form method="post" action="/backups/run">
+      <input type="hidden" name="csrf" value="{{$csrf}}">
+      <button class="btn primary" {{if or $d.Busy (not $d.Sources)}}disabled{{end}} {{if $d.Busy}}title="A backup is already running"{{end}}>{{template "i-archive"}} Back up now</button>
+    </form>
+  </div>
+</div>
+
+{{if not $d.S3Ready}}
+<div class="flash flash-warn">{{template "i-alert"}}<div>Backups are only kept on this server, so they're lost if the server is. <a href="#storage">Add off-site storage</a> (S3, R2, B2, Spaces…) to keep a copy somewhere else.</div></div>
+{{end}}
+
+<div class="stat-row">
+  <div class="stat"><span class="stat-label">Databases</span><strong>{{len $d.Sources}}</strong></div>
+  <div class="stat"><span class="stat-label">Next backup</span><strong>{{if $d.NextRun}}{{$d.NextRun}}{{else}}Off{{end}}</strong></div>
+  <div class="stat"><span class="stat-label">Kept per database</span><strong>{{$d.Settings.Keep}}</strong></div>
+  <div class="stat"><span class="stat-label">Off-site copy</span><strong>{{if $d.S3Ready}}{{$d.S3.Bucket}}{{else}}None{{end}}</strong></div>
+</div>
+
+<section class="section">
+  <div class="section-head"><h2>Databases</h2><span class="hint">MySQL databases and the SQLite files of deployed sites.</span></div>
+  <div class="card">
+  {{with $d.SourcesErr}}<div class="list-empty">{{.}}</div>{{end}}
+  {{if $d.Sources}}
+    <ul class="list">
+    {{range $d.Sources}}
+      <li class="list-row">
+        <span class="callout-icon sm">{{template "i-db"}}</span>
+        <div class="list-main">
+          <div class="list-title"><span class="truncate">{{.Label}}</span><span class="badge">{{if eq .Kind "mysql"}}MySQL{{else}}SQLite{{end}}</span></div>
+          <div class="list-sub">
+            {{with .SiteDomain}}<span>{{.}}</span>{{else}}<span>Not attached to a site</span>{{end}}
+            {{with .Latest}}<span>Last backup {{ago .CreatedAt}}{{if eq .Status "ok"}} · {{bytes .Size}}{{end}}</span>{{template "status" (backupStatus .Status)}}{{else}}<span>Never backed up</span>{{end}}
+          </div>
+        </div>
+        <div class="list-side">
+          <form method="post" action="/backups/run">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <input type="hidden" name="source" value="{{.ID}}">
+            <button class="btn small" {{if $d.Busy}}disabled{{end}}>Back up</button>
+          </form>
+        </div>
+      </li>
+    {{end}}
+    </ul>
+  {{else if not $d.SourcesErr}}
+    <div class="list-empty">No databases yet. MySQL databases from the <a href="/databases">Databases</a> page and SQLite files of deployed Laravel and Django sites show up here.</div>
+  {{end}}
+  </div>
+</section>
+
+<section class="section">
+  <div class="section-head"><h2>Recent backups</h2><span class="hint">Restoring takes a safety backup of the current data first.</span></div>
+  <div class="card">
+  {{if $d.Recent}}
+    <ul class="list">
+    {{range $d.Recent}}
+      <li class="list-row">
+        {{template "status" (backupStatus .Status)}}
+        <div class="list-main">
+          <div class="list-title"><span class="truncate">{{.Label}}</span><span class="badge">{{backupReason .Reason}}</span>{{if .Remote}}<span class="badge" title="Copied to off-site storage">{{template "i-cloud"}} Off-site</span>{{end}}</div>
+          <div class="list-sub"><span title="{{.CreatedAt.Format "2006-01-02 15:04:05 MST"}}">{{ago .CreatedAt}}</span>{{if eq .Status "ok"}}<span>{{bytes .Size}}</span>{{end}}{{with .Error}}<span class="err-text truncate" title="{{.}}">{{.}}</span>{{end}}</div>
+        </div>
+        {{if eq .Status "ok"}}
+        <div class="list-side">
+          <a class="btn small ghost" href="/backups/{{.ID}}/download">Download</a>
+          <form method="post" action="/backups/{{.ID}}/restore"
+                data-confirm="Restore {{.Label}} to how it was {{.CreatedAt.Format "Jan 2, 15:04"}}? Everything written to this database since then is replaced. Skiff takes a safety backup of the current data first.">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <button class="btn small">Restore</button>
+          </form>
+          <form method="post" action="/backups/{{.ID}}/delete" data-confirm="Delete this backup{{if .Remote}} and its off-site copy{{end}}? This can't be undone.">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <button class="btn small ghost" aria-label="Delete backup">Delete</button>
+          </form>
+        </div>
+        {{else if ne .Status "running"}}
+        <div class="list-side">
+          <form method="post" action="/backups/{{.ID}}/delete">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            <button class="btn small ghost">Dismiss</button>
+          </form>
+        </div>
+        {{end}}
+      </li>
+    {{end}}
+    </ul>
+  {{else}}
+    <div class="list-empty">No backups yet.</div>
+  {{end}}
+  </div>
+</section>
+
+<section class="section" id="schedule">
+  <form method="post" action="/backups/settings" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div>
+        <h2>Schedule</h2>
+        <p class="muted">MySQL is dumped with <code>mysqldump --single-transaction</code> and SQLite copied with <code>.backup</code>, so apps keep running while backups are taken. Files are gzipped into <code>/var/backups/skiff</code>, readable by root only.</p>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="enabled" value="1" {{if $d.Settings.Enabled}}checked{{end}}>
+        <span>Back up every database every night
+          <span class="field-hint">Server time is now {{$d.ServerTime}}.</span>
+        </span>
+      </label>
+      <div class="form-grid">
+        <label>Time
+          <input type="time" name="time" value="{{$d.Settings.Time}}" required>
+        </label>
+        <label>Keep
+          <input type="number" name="keep" min="1" max="90" value="{{$d.Settings.Keep}}" required>
+          <span class="field-hint">Nightly and manual backups kept per database; older ones are deleted, off-site too.</span>
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="before_deploy" value="1" {{if $d.Settings.BeforeDeploy}}checked{{end}}>
+        <span>Back up before each deploy
+          <span class="field-hint">Laravel and Python sites' databases are backed up before migrations run; if the backup fails, the deploy stops. The last 3 are kept.</span>
+        </span>
+      </label>
+    </div>
+    <div class="card-footer">
+      <span>Backups run one at a time, alongside deploys.</span>
+      <div class="actions"><button class="btn primary">Save</button></div>
+    </div>
+  </form>
+</section>
+
+<section class="section" id="storage">
+  <form method="post" action="/backups/storage" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div class="card-title-row">
+        <h2>Off-site storage</h2>
+        {{if $d.S3Ready}}<span class="status tone-ok"><i></i>Copying to {{$d.S3.Bucket}}</span>{{end}}
+      </div>
+      <p class="muted">Every backup is also uploaded to an S3-compatible bucket: AWS S3, Cloudflare R2, Backblaze B2, DigitalOcean Spaces, Hetzner, MinIO… Use a key that can only reach this bucket.</p>
+      <div class="form-grid">
+        <label class="full">Endpoint
+          <input name="endpoint" value="{{$d.S3.Endpoint}}" placeholder="https://s3.us-east-1.amazonaws.com" spellcheck="false" autocomplete="off" required>
+          <span class="field-hint">R2: <code>https://&lt;account&gt;.r2.cloudflarestorage.com</code> · B2: <code>https://s3.&lt;region&gt;.backblazeb2.com</code> · Spaces: <code>https://&lt;region&gt;.digitaloceanspaces.com</code></span>
+        </label>
+        <label>Bucket
+          <input name="bucket" value="{{$d.S3.Bucket}}" placeholder="my-backups" spellcheck="false" autocomplete="off" required>
+        </label>
+        <label>Region
+          <input name="region" value="{{$d.S3.Region}}" placeholder="us-east-1" spellcheck="false" autocomplete="off">
+          <span class="field-hint"><code>auto</code> for R2.</span>
+        </label>
+        <label>Access key ID
+          <input name="access_key" value="{{$d.S3.AccessKey}}" spellcheck="false" autocomplete="off" required>
+        </label>
+        <label>Secret access key
+          <input type="password" name="secret_key" {{if $d.S3Secret}}placeholder="Saved; leave blank to keep"{{else}}required{{end}} autocomplete="new-password">
+        </label>
+        <label class="full"><span>Folder <span class="subtle">(optional)</span></span>
+          <input name="prefix" value="{{if $d.S3.Endpoint}}{{$d.S3.Prefix}}{{else}}skiff{{end}}" placeholder="skiff" spellcheck="false" autocomplete="off">
+          <span class="field-hint">Files go to <code>&lt;folder&gt;/&lt;server&gt;/&lt;database&gt;/</code>, so several servers can share a bucket.</span>
+        </label>
+      </div>
+    </div>
+    <div class="card-footer">
+      <span>Saving tests the connection by writing, reading and deleting a small file.</span>
+      <div class="actions">
+        {{if $d.S3Ready}}<button class="btn ghost" formaction="/backups/storage/remove" formnovalidate data-confirm="Stop copying backups off-site? Copies already in the bucket stay there.">Remove</button>{{end}}
+        <button class="btn primary">Save &amp; test</button>
+      </div>
+    </div>
+  </form>
+</section>
+{{end}}

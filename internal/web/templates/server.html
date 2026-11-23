@@ -1,0 +1,89 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$h := $d.Health}}
+<div class="page-head">
+  <div>
+    <h1>Server</h1>
+    <p class="page-sub">{{if $h}}{{$h.Hostname}}{{with $h.OS}} · {{.}}{{end}} · up {{duration $h.Uptime}}{{else}}Resources and services of this server.{{end}}</p>
+  </div>
+  <div class="actions"><a class="btn" href="/server">{{template "i-refresh"}} Refresh</a></div>
+</div>
+
+{{range $d.Alerts}}<div class="flash flash-{{.Tone}}" role="status">{{template "i-alert"}}<div><strong>{{if eq .Tone "err"}}Critical:{{else}}Warning:{{end}}</strong> {{.Msg}}</div></div>{{end}}
+{{with $d.Err}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+
+{{if $d.DryRun}}
+<div class="empty">
+  <span class="callout-icon">{{template "i-activity"}}</span>
+  <h2>Not measured in dry-run mode</h2>
+  <p class="muted">On a real server this page shows CPU, memory and disk use with a 24-hour history, and whether Nginx, PHP-FPM, MySQL and every site process are running.</p>
+</div>
+{{else if $h}}
+<div class="stat-row">
+  <div class="stat"><span class="stat-label">CPU</span><strong>{{printf "%.0f" $h.CPUPercent}}%</strong><span class="stat-sub">load {{printf "%.2f" $h.Load1}} · {{$h.CPUs}} core{{if ne $h.CPUs 1}}s{{end}}</span></div>
+  <div class="stat"><span class="stat-label">Memory</span><strong>{{printf "%.0f" $h.MemUsedPercent}}%</strong><span class="stat-sub">{{bytes (sub64 $h.MemTotal $h.MemAvail)}} of {{bytes $h.MemTotal}}{{if gt $h.SwapTotal 0}} · swap {{printf "%.0f" $h.SwapUsedPercent}}%{{end}}</span></div>
+  <div class="stat"><span class="stat-label">Disk</span><strong {{if ge $h.DiskUsedPercent 85.0}}class="text-warn"{{end}}>{{printf "%.0f" $h.DiskUsedPercent}}%</strong><span class="stat-sub">{{bytes $h.DiskAvail}} free of {{bytes $h.DiskTotal}}</span></div>
+  <div class="stat"><span class="stat-label">Uptime</span><strong>{{duration $h.Uptime}}</strong><span class="stat-sub">{{$h.Kernel}}</span></div>
+</div>
+
+<section class="section">
+  <div class="section-head"><h2>Last 24 hours</h2><span class="hint">Sampled every minute since Skiff started{{if lt $d.Samples 3}}; the charts fill in as samples come in{{end}}.</span></div>
+  <div class="charts">
+  {{range $d.Charts}}
+    <figure class="card chart-card">
+      <figcaption class="chart-head">
+        <span class="chart-title">{{.Title}}</span>
+        {{if not .Empty}}<span class="chart-now">{{printf "%.0f" .Now}}%</span><span class="hint">peak {{printf "%.0f" .Peak}}% · avg {{printf "%.0f" .Avg}}%</span>{{end}}
+      </figcaption>
+      {{if .Empty}}<div class="list-empty">No samples yet.</div>{{else}}
+      <div class="chart-wrap">
+        <svg class="chart" viewBox="0 0 640 150" role="img" aria-label="{{.Title}} use over time, now {{printf "%.0f" .Now}} percent" data-points="{{.Data}}" data-title="{{.Title}}">
+          <line class="chart-grid" x1="0" x2="640" y1="8" y2="8"/>
+          <line class="chart-grid" x1="0" x2="640" y1="75" y2="75"/>
+          <line class="chart-base" x1="0" x2="640" y1="142" y2="142"/>
+          <line class="chart-warn" x1="0" x2="640" y1="{{printf "%.1f" .WarnY}}" y2="{{printf "%.1f" .WarnY}}"/>
+          <path class="chart-area" d="{{.Area}}"/>
+          <path class="chart-line" d="{{.Line}}"/>
+          <line class="chart-cross" x1="0" x2="0" y1="8" y2="142" hidden/>
+          <circle class="chart-dot" r="4" cx="0" cy="0" hidden/>
+        </svg>
+        <span class="chart-y y100">100%</span><span class="chart-y y50">50%</span>
+        <div class="chart-tip" hidden></div>
+      </div>
+      <div class="chart-x"><span>{{.Start}}</span><span>{{.End}}</span></div>
+      {{end}}
+    </figure>
+  {{end}}
+  </div>
+</section>
+
+<div class="grid-2 section">
+  <section>
+    <div class="section-head"><h2>Services</h2></div>
+    <div class="card">
+    {{if $h.Services}}
+      <ul class="list">
+      {{range $h.Services}}
+        <li class="list-row"><div class="list-main"><div class="list-title mono">{{.Name}}</div></div>{{template "unit-state" .State}}</li>
+      {{end}}
+      </ul>
+    {{else}}<div class="list-empty">No services found. Provision the server first.</div>{{end}}
+    </div>
+  </section>
+  <section>
+    <div class="section-head"><h2>Site processes</h2><span class="hint">App servers, queue workers and schedulers.</span></div>
+    <div class="card">
+    {{if $h.SiteUnits}}
+      <ul class="list">
+      {{range $h.SiteUnits}}
+        <li class="list-row"><div class="list-main"><div class="list-title mono truncate">{{.Name}}</div></div>{{template "unit-state" .State}}</li>
+      {{end}}
+      </ul>
+    {{else}}<div class="list-empty">None yet. Node and Python apps, Laravel queue workers and schedulers show up here.</div>{{end}}
+    </div>
+  </section>
+</div>
+{{end}}
+{{end}}
+
+{{define "unit-state"}}{{if eq . "active"}}<span class="status tone-ok"><i></i>Running</span>{{else if eq . "failed"}}<span class="status tone-err"><i></i>Failed</span>{{else if eq . "activating"}}<span class="status tone-info pulse"><i></i>Starting</span>{{else}}<span class="status"><i></i>{{if eq . "inactive"}}Stopped{{else}}{{.}}{{end}}</span>{{end}}{{end}}

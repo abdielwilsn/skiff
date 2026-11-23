@@ -26,7 +26,7 @@ func (s *Server) saveAppSettings(w http.ResponseWriter, r *http.Request, _ store
 		redirect(w, r, s.siteURL(site)+"#app")
 	}
 	switch {
-	case site.IsNode() && !laravel.ValidStartCommand(start):
+	case site.HasApp() && !laravel.ValidStartCommand(start):
 		fail("Enter the command that starts your app, e.g. npm run start.")
 		return
 	case site.IsStatic() && !laravel.ValidOutputDir(out):
@@ -36,7 +36,7 @@ func (s *Server) saveAppSettings(w http.ResponseWriter, r *http.Request, _ store
 		fail("Laravel sites don't have app settings.")
 		return
 	}
-	if site.IsNode() {
+	if site.HasApp() {
 		out = site.OutputDir
 	} else {
 		start = site.StartCommand
@@ -93,7 +93,7 @@ func (s *Server) saveWorkers(w http.ResponseWriter, r *http.Request, _ store.Ses
 	})
 }
 
-// restartProcesses restarts a Node app, or a Laravel site's queue workers.
+// restartProcesses restarts a Node or Python app, or a Laravel site's queue workers.
 func (s *Server) restartProcesses(w http.ResponseWriter, r *http.Request, _ store.Session) {
 	site, ok := s.siteFromPath(w, r)
 	if !ok {
@@ -109,7 +109,7 @@ func (s *Server) restartProcesses(w http.ResponseWriter, r *http.Request, _ stor
 		title = "Restart queue workers for " + site.Domain
 	}
 	s.enqueueSiteJob(w, r, site, "restart", title, func(ctx context.Context, log io.Writer, cur store.Site) error {
-		if cur.IsNode() {
+		if cur.HasApp() {
 			return s.deployer.StartApp(ctx, log, cur)
 		}
 		return s.deployer.ApplyLaravelProcesses(ctx, log, cur)

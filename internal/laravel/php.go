@@ -54,11 +54,11 @@ else
     apt-get update -q
     if ! apt-cache show "php${PHP}-fpm" >/dev/null 2>&1; then
         echo "PHP ${PHP} isn't in Ubuntu's repositories; adding ppa:ondrej/php"
-        apt-get install -y -q software-properties-common
+        apt_install software-properties-common
         add-apt-repository -y ppa:ondrej/php
         apt-get update -q
     fi
-    apt-get install -y -q $PHP_PKGS
+    apt_install $PHP_PKGS
 fi
 
 POOL="/etc/php/${PHP}/fpm/pool.d/{{USER}}.conf"

@@ -120,11 +120,12 @@ if ! command -v apt-get >/dev/null 2>&1; then
     exit 1
 fi
 
+{{APT_RETRIES}}
 echo "==> Updating package lists"
 apt-get update -q
 
 echo "==> Installing Nginx and base packages"
-apt-get install -y -q ca-certificates curl git unzip nginx
+apt_install ca-certificates curl git unzip nginx
 
 echo "==> Creating the {{USER}} user that sites run as"
 if ! id -u {{USER}} >/dev/null 2>&1; then
@@ -183,6 +184,7 @@ nginx -v
 
 func provisionScript(php string) string {
 	return strings.NewReplacer(
+		"{{APT_RETRIES}}", aptRetries,
 		"{{ENSURE_PHP}}", ensurePHPScript(php),
 		"{{PHP}}", php,
 		"{{USER}}", SiteUser,
@@ -263,6 +265,43 @@ server {
 }
 `
 
+const pythonNginxTemplate = `# Managed by Skiff. Created on the first deploy; your edits are kept afterwards.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {{DOMAIN}};
+
+    client_max_body_size 64m;
+
+    # Django's collectstatic output (STATIC_ROOT = BASE_DIR / "staticfiles"),
+    # served by Nginx; anything not there goes to the app (e.g. WhiteNoise).
+    location ^~ /static/ {
+        alias {{SITE}}/current/staticfiles/;
+        try_files $uri @app;
+        expires 30d;
+        access_log off;
+    }
+
+    location / {
+        try_files /nonexistent @app;
+    }
+
+    location @app {
+        proxy_pass http://127.0.0.1:{{PORT}};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $http_connection;
+        proxy_read_timeout 120s;
+        proxy_buffer_size 64k;
+        proxy_buffers 16 32k;
+    }
+}
+`
+
 const staticNginxTemplate = `# Managed by Skiff. Created on the first deploy; your edits are kept afterwards.
 server {
     listen 80;
@@ -308,6 +347,8 @@ func NginxConfig(site store.Site) string {
 		return strings.NewReplacer("{{DOMAIN}}", site.Domain, "{{PORT}}", fmt.Sprint(site.Port)).Replace(nodeNginxTemplate)
 	case site.IsStatic():
 		return strings.NewReplacer("{{DOMAIN}}", site.Domain, "{{ROOT}}", staticRoot(site)).Replace(staticNginxTemplate)
+	case site.IsPython():
+		return strings.NewReplacer("{{DOMAIN}}", site.Domain, "{{PORT}}", fmt.Sprint(site.Port), "{{SITE}}", SitePath(site.Domain)).Replace(pythonNginxTemplate)
 	}
 	return strings.NewReplacer(
 		"{{DOMAIN}}", site.Domain,

@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>New site</h1>
-    <p class="page-sub">Deploy a Laravel app from GitHub. Skiff clones it, installs dependencies, builds assets and serves it.</p>
+    <p class="page-sub">Deploy a Laravel, JavaScript or Python app from GitHub. Skiff clones it, installs dependencies, builds it and serves it.</p>
   </div>
 </div>
 
@@ -45,9 +45,9 @@
         </select>
         <span class="field-hint">Sets the project type and sensible defaults; everything stays editable.</span>
       </label>
-      <label class="full" data-kinds="node">Start command
+      <label class="full" data-kinds="node python">Start command
         <input name="start_command" id="start_command" value="{{$d.StartCommand}}" placeholder="npm run start" spellcheck="false" autocomplete="off">
-        <span class="field-hint">Runs in the deployed release with <code>PORT</code> and <code>HOST</code> set; Nginx forwards your domain to it.</span>
+        <span class="field-hint">Runs in the deployed release with <code>$PORT</code> and <code>$HOST</code> set; Nginx forwards your domain to it. For Django, <code>$WSGI_MODULE</code> is the folder with <code>wsgi.py</code>.</span>
       </label>
       <label class="full" data-kinds="static">Output folder
         <input name="output_dir" id="output_dir" value="{{$d.OutputDir}}" placeholder="dist" spellcheck="false" autocomplete="off">
@@ -69,7 +69,13 @@
         </select>
         <span class="field-hint">Must satisfy your <code>composer.lock</code>. Laravel 13 needs 8.4+.</span>
       </label>
-      <label>Node.js
+      <label data-kinds="python">Python
+        <select name="python">
+          {{range $d.PythonVersions}}<option value="{{.}}" {{if eq . $d.Python}}selected{{end}}>Python {{.}}</option>{{end}}
+        </select>
+        <span class="field-hint">Installed with <a href="https://docs.astral.sh/uv/" target="_blank" rel="noopener noreferrer">uv</a> on the first deploy; each release gets its own virtualenv.</span>
+      </label>
+      <label data-kinds="laravel node static">Node.js
         <select name="node">
           {{range $d.NodeVersions}}<option value="{{.}}" {{if eq . $d.Node}}selected{{end}}>Node {{.}} (LTS)</option>{{end}}
           <option value="" {{if not $d.Node}}selected{{end}}>None</option>
@@ -91,7 +97,7 @@
     </div>
   </div>
   <div class="card-footer">
-    <span>PHP and Node are installed on the first deploy if needed.</span>
+    <span>PHP, Node.js and Python are installed on the first deploy if needed.</span>
     <div class="actions">
       <a class="btn ghost" href="/">Cancel</a>
       <button class="btn primary">{{template "i-rocket"}} Deploy</button>
