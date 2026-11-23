@@ -159,5 +159,5 @@ func (s *Server) logsPage(w http.ResponseWriter, r *http.Request, sess store.Ses
 		d.Error = "Couldn't read logs: " + err.Error()
 	}
 	d.Logs = logs
-	s.render(w, r, "site_logs", http.StatusOK, pageFor(sess, site.Domain+" · Logs", "sites", d))
+	s.render(w, r, "site_logs", http.StatusOK, sitePageFor(sess, site, "logs", "Logs", d))
 }

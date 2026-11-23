@@ -61,7 +61,7 @@ func (s *Server) commandsPage(w http.ResponseWriter, r *http.Request, sess store
 	}
 	d := commandsData{Site: site, Presets: presetsFor(site), Command: r.URL.Query().Get("command")}
 	d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
-	s.render(w, r, "site_commands", http.StatusOK, pageFor(sess, site.Domain+" · Commands", "sites", d))
+	s.render(w, r, "site_commands", http.StatusOK, sitePageFor(sess, site, "commands", "Commands", d))
 }
 
 func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, sess store.Session) {
@@ -73,7 +73,7 @@ func (s *Server) runCommand(w http.ResponseWriter, r *http.Request, sess store.S
 	fail := func(msg string) {
 		d := commandsData{Site: site, Presets: presetsFor(site), Command: command, Error: msg}
 		d.History, _ = s.st.SiteJobsOfKind(site.ID, "command", 20)
-		s.render(w, r, "site_commands", http.StatusUnprocessableEntity, pageFor(sess, site.Domain+" · Commands", "sites", d))
+		s.render(w, r, "site_commands", http.StatusUnprocessableEntity, sitePageFor(sess, site, "commands", "Commands", d))
 	}
 	switch {
 	case command == "":

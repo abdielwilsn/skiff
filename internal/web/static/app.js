@@ -138,3 +138,29 @@
     });
   }
 })();
+
+// Sidebar drawer on small screens.
+document.addEventListener("click", (e) => {
+  const t = e.target.closest("[data-sidebar-toggle]");
+  if (!t) return;
+  document.body.classList.toggle("sb-open");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") document.body.classList.remove("sb-open");
+});
+
+// Client-side filter for lists such as the sites grid.
+document.querySelectorAll("input[data-filter]").forEach((input) => {
+  const items = () => document.querySelectorAll(input.dataset.filter);
+  input.addEventListener("input", () => {
+    const q = input.value.trim().toLowerCase();
+    let shown = 0;
+    items().forEach((el) => {
+      const hit = !q || (el.dataset.search || el.textContent).toLowerCase().includes(q);
+      el.hidden = !hit;
+      if (hit) shown++;
+    });
+    const none = document.getElementById("site-grid-none");
+    if (none) none.hidden = shown > 0;
+  });
+});

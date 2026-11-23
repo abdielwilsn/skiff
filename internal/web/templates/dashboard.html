@@ -36,9 +36,12 @@
 {{end}}
 
 {{if $d.Sites}}
-<div class="grid-cards">
+<div class="toolbar">
+  <label class="search"><span class="sr-only">Search sites</span>{{template "i-search"}}<input type="search" placeholder="Search sites…" data-filter="#site-grid > .site-card" autocomplete="off"></label>
+</div>
+<div class="grid-cards" id="site-grid">
   {{range $d.Sites}}
-  <a class="card site-card" href="/sites/{{.ID}}">
+  <a class="card site-card" href="/sites/{{.ID}}" data-search="{{.Domain}} {{.Repo}} {{.KindLabel}}">
     <div class="site-card-head">
       <span class="monogram">{{initial .Domain}}</span>
       <div class="site-card-title">
@@ -62,6 +65,7 @@
   </a>
   {{end}}
 </div>
+<p class="list-empty" id="site-grid-none" hidden>No sites match your search.</p>
 {{else}}
 <div class="empty">
   <span class="callout-icon">{{template "i-rocket"}}</span>

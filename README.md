@@ -70,7 +70,7 @@ Deploys are release-based, so a failed deploy never touches the live site:
 5. Keeps the newest 5 releases for rollback and drops `node_modules` from
    releases that aren't live.
 
-**Rollback**: the site page lists the kept releases; **Roll back** switches
+**Rollback**: a site's **Deployments** page lists the kept releases; **Roll back** switches
 `current` back instantly and rebuilds the config cache from the current `.env`.
 Database migrations run since that release are not undone.
 
@@ -84,7 +84,7 @@ removed on the deploy after that.
 **Deploy now** on a site always fetches the newest commit of its branch
 (`git fetch` + `git reset --hard`), then runs the deploy script.
 
-**Push to deploy**: on a site's page, **Turn on auto-deploy** adds a webhook
+**Push to deploy**: in a site's **Settings → Git**, **Turn on** adds a webhook
 to the GitHub repository (through your connected GitHub account, which needs
 admin access to the repo). From then on every push to the site's branch queues
 a deploy; the job title shows the commit and who pushed it.
@@ -99,7 +99,7 @@ a deploy; the job title shows the commit and who pushed it.
 
 ## Queue workers & scheduler (Laravel)
 
-The **Queue workers & scheduler** card on a Laravel site's page:
+The **Queue workers & scheduler** card on a Laravel site's **Overview**:
 
 - **Worker processes** (0–10) run `php artisan queue:work <options>` as systemd
   services (`skiff-<domain>-worker@N`) as the `skiff` user in the live release,
@@ -134,7 +134,7 @@ Saving the `.env` restarts the app.
 
 ## Running commands
 
-Each site has a **Commands** page (button on the site page) for one-off
+Each site has a **Commands** page (in the site's sidebar) for one-off
 commands, like Laravel Cloud's: a text box plus one-click presets for
 `migrate`, `migrate:status`, `db:seed`, `queue:restart`, `optimize:clear`,
 `storage:link` and more. Commands:
@@ -217,7 +217,7 @@ passwords, and delete databases (type the name to confirm).
 
 ## HTTPS for sites
 
-On a site's page, **Enable HTTPS** gets a free Let's Encrypt certificate:
+In a site's **Settings → Domain & HTTPS**, **Enable HTTPS** gets a free Let's Encrypt certificate:
 
 1. Checks that the domain resolves (and whether it points at this server).
 2. Installs certbot + its Nginx plugin the first time (kept out of

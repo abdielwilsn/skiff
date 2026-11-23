@@ -390,9 +390,8 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	if !ok {
 		return
 	}
-	d := siteData{Site: site, Path: laravel.SitePath(site.Domain) + "/current", NginxPath: laravel.NginxConfigPath(site.Domain)}
-	d.Jobs, _ = s.st.SiteJobs(site.ID, 15)
-	d.Busy, _ = s.st.HasActiveJob(site.ID)
+	d := s.siteBase(site)
+	d.Jobs, _ = s.st.SiteJobs(site.ID, 6)
 	if db, err := s.st.DatabaseForSite(site.ID); err == nil {
 		d.Database = &db
 	}
@@ -404,6 +403,16 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 		d.Process, _ = s.deployer.Status(ctx, site)
 		cancel()
 	}
+	s.render(w, r, "site", http.StatusOK, sitePageFor(sess, site, "overview", "", d))
+}
+
+func (s *Server) siteDeploymentsPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	d := s.siteBase(site)
+	d.Jobs, _ = s.st.SiteJobs(site.ID, 30)
 	if site.DeployedAt != nil {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		rels, err := s.deployer.Releases(ctx, site)
@@ -413,6 +422,15 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 		}
 		d.Releases = rels
 	}
+	s.render(w, r, "site_deployments", http.StatusOK, sitePageFor(sess, site, "deployments", "Deployments", d))
+}
+
+func (s *Server) siteSettingsPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	site, ok := s.siteFromPath(w, r)
+	if !ok {
+		return
+	}
+	d := s.siteBase(site)
 	d.HookBase = s.publicHTTPSBase()
 	d.GitHubConnected = s.githubToken() != ""
 	d.HTTPSEligible, d.HTTPSReason = laravel.HTTPSEligible(site.Domain)
@@ -426,7 +444,14 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 		}
 		cancel()
 	}
-	s.render(w, r, "site", http.StatusOK, pageFor(sess, site.Domain, "sites", d))
+	s.render(w, r, "site_settings", http.StatusOK, sitePageFor(sess, site, "settings", "Settings", d))
+}
+
+// siteBase fills the fields every site page uses.
+func (s *Server) siteBase(site store.Site) siteData {
+	d := siteData{Site: site, Path: laravel.SitePath(site.Domain) + "/current", NginxPath: laravel.NginxConfigPath(site.Domain)}
+	d.Busy, _ = s.st.HasActiveJob(site.ID)
+	return d
 }
 
 func (s *Server) enableHTTPS(w http.ResponseWriter, r *http.Request, _ store.Session) {
@@ -436,7 +461,7 @@ func (s *Server) enableHTTPS(w http.ResponseWriter, r *http.Request, _ store.Ses
 	}
 	fail := func(msg string) {
 		setFlash(w, "err", msg)
-		redirect(w, r, s.siteURL(site)+"#https")
+		redirect(w, r, s.siteURL(site)+"/settings#https")
 	}
 	if ok, why := laravel.HTTPSEligible(site.Domain); !ok {
 		fail(why)
@@ -487,7 +512,7 @@ func (s *Server) disableHTTPS(w http.ResponseWriter, r *http.Request, _ store.Se
 	}
 	if busy, _ := s.st.HasActiveJob(site.ID); busy {
 		setFlash(w, "err", "Wait for the running job to finish first.")
-		redirect(w, r, s.siteURL(site)+"#https")
+		redirect(w, r, s.siteURL(site)+"/settings#https")
 		return
 	}
 	siteID := site.ID
@@ -590,12 +615,12 @@ func (s *Server) rollback(w http.ResponseWriter, r *http.Request, _ store.Sessio
 	id := r.FormValue("release")
 	if !laravel.ValidReleaseID(id) {
 		setFlash(w, "err", "Pick a release to roll back to.")
-		redirect(w, r, s.siteURL(site)+"#releases")
+		redirect(w, r, s.siteURL(site)+"/deployments")
 		return
 	}
 	if busy, _ := s.st.HasActiveJob(site.ID); busy {
 		setFlash(w, "err", "Wait for the running job to finish first.")
-		redirect(w, r, s.siteURL(site)+"#releases")
+		redirect(w, r, s.siteURL(site)+"/deployments")
 		return
 	}
 	siteID := site.ID
@@ -638,7 +663,7 @@ func (s *Server) saveScript(w http.ResponseWriter, r *http.Request, _ store.Sess
 		return
 	}
 	setFlash(w, "ok", "Deploy script saved. It runs on the next deploy.")
-	redirect(w, r, s.siteURL(site)+"#script")
+	redirect(w, r, s.siteURL(site)+"/settings#script")
 }
 
 type envData struct {
@@ -660,7 +685,7 @@ func (s *Server) envPage(w http.ResponseWriter, r *http.Request, sess store.Sess
 		d.Error = "Could not read .env: " + err.Error()
 	}
 	d.Env = env
-	s.render(w, r, "site_env", http.StatusOK, pageFor(sess, site.Domain+" · Environment", "sites", d))
+	s.render(w, r, "site_env", http.StatusOK, sitePageFor(sess, site, "env", "Environment", d))
 }
 
 func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request, _ store.Session) {
@@ -703,7 +728,7 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request, _ store.Sess
 	}
 	if r.FormValue("confirm") != site.Domain {
 		setFlash(w, "err", "Type the domain exactly to confirm deletion.")
-		redirect(w, r, s.siteURL(site)+"#danger")
+		redirect(w, r, s.siteURL(site)+"/settings#danger")
 		return
 	}
 	if err := s.st.SetSiteStatus(site.ID, store.SiteDeleting); err != nil {
@@ -773,7 +798,11 @@ func (s *Server) jobPage(w http.ResponseWriter, r *http.Request, sess store.Sess
 			d.Site = &site
 		}
 	}
-	s.render(w, r, "job", http.StatusOK, pageFor(sess, j.Title, "sites", d))
+	p := pageFor(sess, j.Title, "sites", d)
+	if d.Site != nil && j.Kind != "delete" {
+		p = sitePageFor(sess, *d.Site, "deployments", "Job #"+strconv.FormatInt(j.ID, 10), d)
+	}
+	s.render(w, r, "job", http.StatusOK, p)
 }
 
 func (s *Server) jobLog(w http.ResponseWriter, r *http.Request, _ store.Session) {

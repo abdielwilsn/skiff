@@ -42,10 +42,10 @@ func (s *Server) enableAutoDeploy(w http.ResponseWriter, r *http.Request, _ stor
 	}
 	fail := func(msg string) {
 		setFlash(w, "err", msg)
-		redirect(w, r, s.siteURL(site)+"#autodeploy")
+		redirect(w, r, s.siteURL(site)+"/settings#autodeploy")
 	}
 	if site.AutoDeploy {
-		redirect(w, r, s.siteURL(site)+"#autodeploy")
+		redirect(w, r, s.siteURL(site)+"/settings#autodeploy")
 		return
 	}
 	token := s.githubToken()
@@ -83,7 +83,7 @@ func (s *Server) enableAutoDeploy(w http.ResponseWriter, r *http.Request, _ stor
 		return
 	}
 	setFlash(w, "ok", "Auto-deploy is on. Every push to "+site.Branch+" deploys "+site.Domain+".")
-	redirect(w, r, s.siteURL(site)+"#autodeploy")
+	redirect(w, r, s.siteURL(site)+"/settings#autodeploy")
 }
 
 func (s *Server) disableAutoDeploy(w http.ResponseWriter, r *http.Request, _ store.Session) {
@@ -101,7 +101,7 @@ func (s *Server) disableAutoDeploy(w http.ResponseWriter, r *http.Request, _ sto
 		return
 	}
 	setFlash(w, "ok", msg)
-	redirect(w, r, s.siteURL(site)+"#autodeploy")
+	redirect(w, r, s.siteURL(site)+"/settings#autodeploy")
 }
 
 // removeWebhook deletes the site's GitHub webhook, if it has one.

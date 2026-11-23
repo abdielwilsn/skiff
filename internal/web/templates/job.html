@@ -1,7 +1,6 @@
 {{define "content"}}
 {{$d := .Data}}
 {{$site := $d.Site}}{{if eq $d.Job.Kind "delete"}}{{$site = false}}{{end}}
-<div class="crumbs"><a href="/">Sites</a><span>/</span>{{with $site}}<a href="/sites/{{.ID}}">{{.Domain}}</a><span>/</span>{{end}}<span>Job #{{$d.Job.ID}}</span></div>
 <div class="page-head">
   <div>
     <h1>{{$d.Job.Title}}</h1>

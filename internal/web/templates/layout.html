@@ -9,42 +9,100 @@
 <link rel="stylesheet" href="/static/app.css">
 <script src="/static/app.js" defer></script>
 </head>
-<body>
+<body class="{{if .User}}has-shell{{end}}">
 {{if .User}}
-<div class="chrome">
-  <header class="chrome-row topbar">
-    <a class="brand" href="/" aria-label="Skiff home">{{template "logo"}}<span>Skiff</span></a>
-    <span class="crumb-sep" aria-hidden="true">/</span>
-    <span class="server-pill" title="This server"><span class="dot"></span>{{.Host}}</span>
-    <span class="spacer"></span>
-    <a class="top-link" href="https://github.com/abdielwilsn/skiff" target="_blank" rel="noopener noreferrer">{{template "i-github"}}<span>Source</span></a>
-    <details class="menu">
-      <summary aria-label="Account menu"><span class="avatar">{{initial .User}}</span></summary>
-      <div class="menu-panel">
-        <div class="menu-head"><strong>{{.User}}</strong><span class="subtle small">Administrator</span></div>
-        <a class="menu-item" href="/settings">{{template "i-settings"}} Settings</a>
-        <form method="post" action="/logout">
-          <input type="hidden" name="csrf" value="{{.CSRF}}">
-          <button class="menu-item">{{template "i-logout"}} Log out</button>
-        </form>
-      </div>
-    </details>
-  </header>
-  <nav class="chrome-row tabs" aria-label="Main">
-    <a class="tab{{if eq .Nav "sites"}} active{{end}}" href="/">Sites</a>
-    <a class="tab{{if eq .Nav "repos"}} active{{end}}" href="/repos">Repositories</a>
-    <a class="tab{{if eq .Nav "databases"}} active{{end}}" href="/databases">Databases</a>
-    <a class="tab{{if eq .Nav "settings"}} active{{end}}" href="/settings">Settings</a>
-  </nav>
+<div class="shell">
+  <aside class="sidebar" id="sidebar" aria-label="Navigation">
+    <div class="sb-top">
+      <a class="brand" href="/" aria-label="Skiff home">{{template "logo"}}<span>Skiff</span></a>
+      <button type="button" class="sb-icon-btn sb-close" data-sidebar-toggle aria-label="Close menu">{{template "i-x"}}</button>
+    </div>
+    <div class="sb-server" title="This server">
+      <span class="sb-server-dot"></span>
+      <span class="truncate">{{.Host}}</span>
+      <span class="sb-plan">Self-hosted</span>
+    </div>
+
+    {{if .Site}}{{$s := .Site}}
+    <a class="sb-back" href="/">{{template "i-arrow-left"}} All sites</a>
+    <div class="sb-site">
+      <span class="monogram sm">{{initial $s.Domain}}</span>
+      <div class="sb-site-name"><strong class="truncate">{{$s.Domain}}</strong><span>{{$s.KindLabel}}</span></div>
+    </div>
+    <nav class="sb-nav" aria-label="Site">
+      <a class="sb-link{{if eq .SiteNav "overview"}} active{{end}}" href="/sites/{{$s.ID}}">{{template "i-grid"}}<span>Overview</span></a>
+      <a class="sb-link{{if eq .SiteNav "deployments"}} active{{end}}" href="/sites/{{$s.ID}}/deployments">{{template "i-layers"}}<span>Deployments</span></a>
+      <a class="sb-link{{if eq .SiteNav "logs"}} active{{end}}" href="/sites/{{$s.ID}}/logs">{{template "i-list"}}<span>Logs</span></a>
+      <a class="sb-link{{if eq .SiteNav "commands"}} active{{end}}" href="/sites/{{$s.ID}}/commands">{{template "i-terminal"}}<span>Commands</span></a>
+      <a class="sb-link{{if eq .SiteNav "env"}} active{{end}}" href="/sites/{{$s.ID}}/env">{{template "i-env"}}<span>Environment</span></a>
+      <a class="sb-link{{if eq .SiteNav "settings"}} active{{end}}" href="/sites/{{$s.ID}}/settings">{{template "i-settings"}}<span>Settings</span></a>
+    </nav>
+    <div class="sb-label">Site</div>
+    <nav class="sb-nav sb-nav-quiet" aria-label="Site links">
+      <a class="sb-link" href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">{{template "i-globe-lg"}}<span>Visit site</span>{{template "i-external"}}</a>
+      <a class="sb-link" href="https://github.com/{{$s.Repo}}" target="_blank" rel="noopener noreferrer">{{template "i-github"}}<span class="truncate">{{$s.Repo}}</span>{{template "i-external"}}</a>
+    </nav>
+    {{else}}
+    <nav class="sb-nav" aria-label="Main">
+      <a class="sb-link{{if eq .Nav "sites"}} active{{end}}" href="/">{{template "i-grid"}}<span>Sites</span></a>
+      <a class="sb-link{{if eq .Nav "repos"}} active{{end}}" href="/repos">{{template "i-github"}}<span>Repositories</span></a>
+      <a class="sb-link{{if eq .Nav "databases"}} active{{end}}" href="/databases">{{template "i-db"}}<span>Databases</span></a>
+      <a class="sb-link{{if eq .Nav "settings"}} active{{end}}" href="/settings">{{template "i-settings"}}<span>Settings</span></a>
+    </nav>
+    <div class="sb-label">Resources</div>
+    <nav class="sb-nav sb-nav-quiet" aria-label="Resources">
+      <a class="sb-link" href="https://github.com/abdielwilsn/skiff#readme" target="_blank" rel="noopener noreferrer">{{template "i-book"}}<span>Documentation</span>{{template "i-external"}}</a>
+      <a class="sb-link" href="https://github.com/abdielwilsn/skiff/releases" target="_blank" rel="noopener noreferrer">{{template "i-tag"}}<span>Releases</span>{{template "i-external"}}</a>
+    </nav>
+    {{end}}
+
+    <div class="sb-foot">
+      <details class="menu menu-up">
+        <summary class="sb-user" aria-label="Account menu">
+          <span class="avatar">{{initial .User}}</span>
+          <span class="sb-user-name"><strong class="truncate">{{.User}}</strong><span>Skiff {{.Version}}</span></span>
+          {{template "i-chevrons"}}
+        </summary>
+        <div class="menu-panel">
+          <div class="menu-head"><strong>{{.User}}</strong><span class="subtle small">Administrator</span></div>
+          <a class="menu-item" href="/settings">{{template "i-settings"}} Settings</a>
+          <a class="menu-item" href="https://github.com/abdielwilsn/skiff" target="_blank" rel="noopener noreferrer">{{template "i-github"}} Source code</a>
+          <form method="post" action="/logout">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <button class="menu-item">{{template "i-logout"}} Log out</button>
+          </form>
+        </div>
+      </details>
+    </div>
+  </aside>
+  <div class="sb-scrim" data-sidebar-toggle></div>
+
+  <div class="shell-main">
+    <header class="topbar">
+      <button type="button" class="sb-icon-btn sb-open" data-sidebar-toggle aria-label="Open menu" aria-controls="sidebar">{{template "i-menu"}}</button>
+      <nav class="crumbs" aria-label="Breadcrumbs">
+        {{if .Site}}
+          <a href="/">Sites</a>{{template "i-slash"}}
+          {{if .Crumb}}<a href="/sites/{{.Site.ID}}">{{.Site.Domain}}</a>{{template "i-slash"}}<span class="here">{{.Crumb}}</span>
+          {{else}}<span class="here">{{.Site.Domain}}</span>{{end}}
+        {{else}}<span class="here">{{.Title}}</span>{{end}}
+      </nav>
+      <span class="spacer"></span>
+      {{if .Site}}<a class="btn small" href="{{.Site.Scheme}}://{{.Site.Domain}}" target="_blank" rel="noopener noreferrer">Visit {{template "i-external"}}</a>{{end}}
+    </header>
+    {{if .DryRun}}<div class="banner">Dry-run mode: server commands are printed in job logs, not executed.</div>{{end}}
+    <main>
+      {{with .Flash}}{{if .Msg}}{{template "flash" .}}{{end}}{{end}}
+      {{template "content" .}}
+    </main>
+  </div>
 </div>
-{{end}}
+{{else}}
 {{if .DryRun}}<div class="banner">Dry-run mode: server commands are printed in job logs, not executed.</div>{{end}}
-<main class="{{if not .User}}narrow{{end}}">
+<main class="narrow">
   {{with .Flash}}{{if .Msg}}{{template "flash" .}}{{end}}{{end}}
   {{template "content" .}}
 </main>
-{{if .User}}
-<footer class="footer"><div class="chrome-row"><span>Skiff {{.Version}}</span><span class="spacer"></span><span>Self-hosted on {{.Host}}</span></div></footer>
 {{end}}
 </body>
 </html>{{end}}
@@ -103,3 +161,14 @@
 {{define "i-terminal"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4"/></svg>{{end}}
 {{define "i-list"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/></svg>{{end}}
 {{define "i-zap"}}<svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6z"/></svg>{{end}}
+{{define "i-grid"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"/><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"/><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"/></svg>{{end}}
+{{define "i-layers"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5"/></svg>{{end}}
+{{define "i-env"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"/><path d="m11 12 8.5-8.5M16 7l2.5 2.5M14 9l2 2"/></svg>{{end}}
+{{define "i-globe-lg"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3z"/></svg>{{end}}
+{{define "i-arrow-left"}}<svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>{{end}}
+{{define "i-menu"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>{{end}}
+{{define "i-x"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg>{{end}}
+{{define "i-book"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v15H6.5A2.5 2.5 0 0 0 4 20.5z"/><path d="M4 20.5A2.5 2.5 0 0 0 6.5 23H20v-5"/></svg>{{end}}
+{{define "i-tag"}}<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12V4a1 1 0 0 1 1-1h8l9 9-9 9z"/><circle cx="8" cy="8" r="1.5"/></svg>{{end}}
+{{define "i-chevrons"}}<svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 9 4-4 4 4M8 15l4 4 4-4"/></svg>{{end}}
+{{define "i-slash"}}<svg class="crumb-slash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M16 3 8 21"/></svg>{{end}}

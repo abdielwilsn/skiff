@@ -66,5 +66,27 @@ func TestCreateSitesOfEveryKind(t *testing.T) {
 		if w.Code != 200 || !strings.Contains(body, x.KindLabel()) || strings.Contains(body, `name="php"`) {
 			t.Errorf("%s page: %d (PHP picker shown: %v)", x.Domain, w.Code, strings.Contains(body, `name="php"`))
 		}
+
+		// The site's other sections render with the site sidebar, the right
+		// item active and the content that moved there.
+		id := strconv.FormatInt(x.ID, 10)
+		for _, pg := range []struct {
+			h      func(http.ResponseWriter, *http.Request, store.Session)
+			active string
+			want   string
+		}{
+			{s.sitePage, `/sites/` + id + `">`, "Recent activity"},
+			{s.siteDeploymentsPage, `/sites/` + id + `/deployments">`, "Releases"},
+			{s.siteSettingsPage, `/sites/` + id + `/settings">`, "Deploy script"},
+		} {
+			r := httptest.NewRequest(http.MethodGet, "/sites/x", nil)
+			r.SetPathValue("id", id)
+			w := httptest.NewRecorder()
+			pg.h(w, r, store.Session{Username: "admin"})
+			body := w.Body.String()
+			if w.Code != 200 || !strings.Contains(body, `class="sb-link active" href="`+pg.active) || !strings.Contains(body, pg.want) || !strings.Contains(body, "All sites") {
+				t.Errorf("%s %s: code %d, active link or %q missing", x.Domain, pg.active, w.Code, pg.want)
+			}
+		}
 	}
 }

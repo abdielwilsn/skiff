@@ -161,6 +161,8 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sites/new", s.auth(s.newSitePage))
 	m.HandleFunc("POST /sites", s.auth(s.createSite))
 	m.HandleFunc("GET /sites/{id}", s.auth(s.sitePage))
+	m.HandleFunc("GET /sites/{id}/deployments", s.auth(s.siteDeploymentsPage))
+	m.HandleFunc("GET /sites/{id}/settings", s.auth(s.siteSettingsPage))
 	m.HandleFunc("POST /sites/{id}/deploy", s.auth(s.deploySite))
 	m.HandleFunc("POST /sites/{id}/rollback", s.auth(s.rollback))
 	m.HandleFunc("POST /sites/{id}/app", s.auth(s.saveAppSettings))
@@ -266,9 +268,13 @@ func (s *Server) needsSetup() bool {
 type flash struct{ Kind, Msg string }
 
 type page struct {
-	Host    string // the panel's host name, shown in the header
-	Title   string
-	Nav     string
+	Host  string // the panel's host name, shown in the header
+	Title string
+	Nav   string // global section: sites, repos, databases, settings
+	// Site pages switch the sidebar to the site's own navigation.
+	Site    *store.Site
+	SiteNav string // overview, deployments, env, commands, logs, settings
+	Crumb   string // last breadcrumb on site pages ("" on the overview)
 	User    string
 	CSRF    string
 	Flash   flash
@@ -316,6 +322,18 @@ func (s *Server) loadTemplates() error {
 
 func pageFor(sess store.Session, title, nav string, data any) page {
 	return page{Title: title, Nav: nav, User: sess.Username, CSRF: sess.CSRF, Data: data}
+}
+
+// sitePageFor builds a page that belongs to one site: the sidebar shows the
+// site's sections and the top bar its breadcrumbs.
+func sitePageFor(sess store.Session, site store.Site, nav, crumb string, data any) page {
+	title := site.Domain
+	if crumb != "" {
+		title += " · " + crumb
+	}
+	p := pageFor(sess, title, "sites", data)
+	p.Site, p.SiteNav, p.Crumb = &site, nav, crumb
+	return p
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, status int, p page) {
