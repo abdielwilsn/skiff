@@ -34,7 +34,13 @@ import (
 // KeepReleases is how many successful releases are kept for rollback.
 const KeepReleases = 5
 
-var releaseIDRe = regexp.MustCompile(`^[0-9]{14}$`)
+var (
+	releaseIDRe = regexp.MustCompile(`^[0-9]{14}$`)
+	commitRe    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+)
+
+// ValidCommit reports whether c is a full, lowercase Git commit hash.
+func ValidCommit(c string) bool { return commitRe.MatchString(c) }
 
 // ValidReleaseID reports whether id looks like a release directory name.
 func ValidReleaseID(id string) bool { return releaseIDRe.MatchString(id) }
@@ -43,6 +49,7 @@ func ValidReleaseID(id string) bool { return releaseIDRe.MatchString(id) }
 type Release struct {
 	ID       string    // directory name, a UTC timestamp
 	Revision string    // "abc1234 commit subject"
+	Commit   string    // full commit hash; "" for releases built before Skiff recorded it
 	Current  bool      // what the site serves now
 	Built    time.Time // parsed from ID
 }
@@ -81,6 +88,16 @@ if [ -d "$SITE/shared" ]; then ENVF="$SITE/shared/.env"; else ENVF="$SITE/.env";
 // it, and only then makes it live. token may be empty for public repos; if db
 // is non-nil the database is created and written into .env first.
 func (d *Deployer) Deploy(ctx context.Context, w io.Writer, site store.Site, token string, db *DBSpec) error {
+	return d.DeployCommit(ctx, w, site, token, db, "")
+}
+
+// DeployCommit is Deploy, but builds the given commit (a full hash) instead
+// of the tip of the site's branch: how a commit tested on staging is promoted
+// to production. "" means the branch tip.
+func (d *Deployer) DeployCommit(ctx context.Context, w io.Writer, site store.Site, token string, db *DBSpec, commit string) error {
+	if commit != "" && !ValidCommit(commit) {
+		return fmt.Errorf("invalid commit %q", commit)
+	}
 	q := shell.Quote
 	dir := SitePath(site.Domain)
 	id := newReleaseID()
@@ -88,22 +105,31 @@ func (d *Deployer) Deploy(ctx context.Context, w io.Writer, site store.Site, tok
 
 	// 1. Code. Only this step sees the GitHub token; the deploy script (and the
 	// composer packages it runs) never do.
-	step(w, "Fetching %s (%s)", site.Repo, site.Branch)
+	ref := site.Branch
+	if commit != "" {
+		ref = commit
+		step(w, "Fetching %s at %s", site.Repo, commit[:7])
+	} else {
+		step(w, "Fetching %s (%s)", site.Repo, site.Branch)
+	}
 	fetch := fmt.Sprintf(`SITE=%[1]s
 REPO="$SITE/repo"
 REL=%[4]s
+REF=%[6]s
 mkdir -p "$SITE/releases"
-if [ -d "$REPO/.git" ]; then
-    git -C "$REPO" fetch --depth=1 origin %[2]s
-    git -C "$REPO" reset -q --hard FETCH_HEAD
-else
+if [ ! -d "$REPO/.git" ]; then
     git clone -q --depth=1 --single-branch --branch %[2]s %[3]s "$REPO"
+    [ "$REF" = %[2]s ] || { git -C "$REPO" fetch --depth=1 origin "$REF" && git -C "$REPO" reset -q --hard FETCH_HEAD; }
+else
+    git -C "$REPO" fetch --depth=1 origin "$REF"
+    git -C "$REPO" reset -q --hard FETCH_HEAD
 fi
 git -C "$REPO" log -1 --format='Commit %%h: %%s (%%an, %%cr)'
 mkdir "$REL"
 git --git-dir="$REPO/.git" --work-tree="$REL" checkout -f HEAD -- .
 git -C "$REPO" log -1 --format='%%h %%s' > "$REL/.skiff-revision"
-echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.Repo)), q(rel), id)
+git -C "$REPO" rev-parse HEAD > "$REL/.skiff-commit"
+echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.Repo)), q(rel), id, q(ref))
 	if err := d.run(ctx, w, fetch, executor.Options{User: SiteUser, Env: github.GitEnv(token)}); err != nil {
 		if token == "" {
 			fmt.Fprintln(w, "\nHint: private repositories need GitHub connected in Settings → GitHub.")
@@ -422,8 +448,9 @@ cd "$SITE/releases"
 for r in *; do
     [ -f "$r/.skiff-ok" ] || continue
     rev="$(head -n 1 "$r/.skiff-revision" 2>/dev/null | cut -c1-200)"
+    sha="$(head -c 40 "$r/.skiff-commit" 2>/dev/null || true)"
     if [ "releases/$r" = "$LIVE" ]; then c=1; else c=0; fi
-    printf '%s\t%s\t%s\n' "$r" "$c" "$rev"
+    printf '%s\t%s\t%s\t%s\n' "$r" "$c" "$sha" "$rev"
 done`
 	var out bytes.Buffer
 	if err := d.Exec.Run(ctx, script, executor.Options{User: SiteUser}, &out); err != nil {
@@ -431,13 +458,16 @@ done`
 	}
 	var list []Release
 	for _, line := range strings.Split(out.String(), "\n") {
-		parts := strings.SplitN(line, "\t", 3)
+		parts := strings.SplitN(line, "\t", 4)
 		if len(parts) < 2 || !ValidReleaseID(parts[0]) {
 			continue // ignores anything that isn't a release line (e.g. dry-run output)
 		}
 		r := Release{ID: parts[0], Current: parts[1] == "1"}
-		if len(parts) == 3 {
-			r.Revision = parts[2]
+		if len(parts) == 4 {
+			if ValidCommit(parts[2]) {
+				r.Commit = parts[2]
+			}
+			r.Revision = parts[3]
 		}
 		r.Built, _ = time.Parse("20060102150405", r.ID)
 		list = append(list, r)

@@ -1,0 +1,93 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$s := $d.Site}}
+{{$p := $d.Production}}
+{{$csrf := .CSRF}}
+<div class="page-head">
+  <div>
+    <h1>Environments</h1>
+    <p class="page-sub">Each environment deploys <code>{{$p.Repo}}</code> from its own branch to its own domain, with its own <code>.env</code>{{if $p.IsLaravel}} and database{{end}}. Test on staging, then promote the exact commit to production.</p>
+  </div>
+</div>
+
+<section>
+  <div class="card">
+    <ul class="list">
+    {{range $d.Rows}}{{$e := .Site}}
+      <li class="list-row env-row{{if eq $e.ID $s.ID}} is-here{{end}}">
+        <span class="env-tag{{if $e.IsProduction}} prod{{end}}">{{$e.EnvName}}</span>
+        <div class="list-main">
+          <div class="list-title"><a class="truncate" href="/sites/{{$e.ID}}">{{$e.Domain}}</a>{{if eq $e.ID $s.ID}}<span class="badge">This site</span>{{end}}</div>
+          <div class="list-sub">
+            <span class="meta">{{template "i-branch"}} <span class="mono">{{$e.Branch}}</span></span>
+            {{with .Live}}<span class="truncate" title="{{.Commit}}">{{if .Revision}}{{.Revision}}{{else}}Release {{.ID}}{{end}}</span>{{else}}<span>{{if $e.DeployedAt}}Deployed {{ago $e.DeployedAt}}{{else}}Not deployed yet{{end}}</span>{{end}}
+            {{if $e.AutoDeploy}}<span class="meta" title="Deploys on every push to {{$e.Branch}}">{{template "i-zap"}} Auto-deploy</span>{{end}}
+          </div>
+        </div>
+        <div class="list-side">
+          {{template "status" $e.Status}}
+          {{if not $e.IsProduction}}
+            {{with .Live}}{{if .Commit}}
+            <form method="post" action="/sites/{{$e.ID}}/promote"
+                  data-confirm="Deploy {{slice .Commit 0 7}}{{if .Revision}} ({{.Revision}}){{end}}, the commit {{$e.Domain}} runs, to production at {{$p.Domain}}?{{if $p.IsLaravel}} Production's database is backed up and its migrations run, as in any deploy.{{end}}">
+              <input type="hidden" name="csrf" value="{{$csrf}}">
+              <input type="hidden" name="commit" value="{{.Commit}}">
+              <button class="btn small">{{template "i-arrow-up"}} Promote to production</button>
+            </form>
+            {{else}}
+            <span class="hint" title="Releases built before this version of Skiff don't record the full commit.">Deploy again to promote</span>
+            {{end}}{{end}}
+          {{end}}
+        </div>
+      </li>
+    {{end}}
+    </ul>
+  </div>
+  {{if gt (len $d.Rows) 1}}<p class="hint section-note">Promoting deploys that commit to production without changing its branch: production keeps following <code>{{$p.Branch}}</code>. Merge into <code>{{$p.Branch}}</code> too, so production's next deploy doesn't go back to older code.</p>{{end}}
+</section>
+
+<section class="section" id="new">
+  <form method="post" action="/sites/{{$s.ID}}/environments" class="card">
+    <input type="hidden" name="csrf" value="{{$csrf}}">
+    <div class="card-body stack">
+      <div>
+        <h2>New environment</h2>
+        <p class="muted">A copy of {{$p.Domain}}'s setup ({{$p.KindLabel}}{{if $p.IsLaravel}}, PHP {{$p.PHPVersion}}{{end}}{{if $p.IsPython}}, Python {{$p.PythonVersion}}{{end}}{{if $p.NodeVersion}}, Node.js {{$p.NodeVersion}}{{end}}, deploy script{{if or $p.WorkerCount $p.Scheduler}}, workers and scheduler{{end}}) that deploys another branch.</p>
+      </div>
+      {{with $d.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+      <div class="form-grid">
+        <label>Name
+          <input name="name" value="{{$d.Name}}" placeholder="staging" pattern="[a-z][a-z0-9\-]{0,19}" maxlength="20" required spellcheck="false" autocomplete="off">
+          <span class="field-hint">Lowercase, e.g. <code>staging</code>, <code>preview</code> or <code>dev</code>.</span>
+        </label>
+        <label>Branch
+          <input name="branch" value="{{$d.Branch}}" placeholder="staging" required spellcheck="false" autocomplete="off">
+          <span class="field-hint">Must exist in <code>{{$p.Repo}}</code>.</span>
+        </label>
+        <label class="full">Domain
+          <input name="domain" value="{{$d.Domain}}" placeholder="staging.example.com" required spellcheck="false" autocomplete="off">
+          <span class="field-hint">Point its DNS at this server first, like production's. HTTPS can be turned on afterwards in its Settings.</span>
+        </label>
+      </div>
+      <label class="check">
+        <input type="checkbox" name="copy_env" value="1" {{if $d.CopyEnv}}checked{{end}}>
+        <span>Start with production's environment variables
+          <span class="field-hint"><code>APP_ENV</code> becomes the environment's name, and URLs and allowed hosts that name {{$p.Domain}} get the new domain. Otherwise the <code>.env</code> starts from <code>.env.example</code>.</span>
+        </span>
+      </label>
+      {{if $p.IsLaravel}}
+      <div class="note">{{template "i-db"}}<span>
+        {{if and $d.Database $d.MySQL}}Gets its own MySQL database, so migrations and test data never touch production's <code>{{$d.Database.Name}}</code>.
+        {{else}}SQLite databases are per environment. If production's <code>.env</code> points at a database server, the copy keeps pointing there; change it on the environment's Env variables page.{{end}}
+      </span></div>
+      {{else}}
+      <div class="note">{{template "i-db"}}<span>Database settings in the <code>.env</code> are copied unchanged. If production uses a database server, point the environment at its own database on its Env variables page.</span></div>
+      {{end}}
+    </div>
+    <div class="card-footer">
+      <span>Creating it deploys the branch right away.</span>
+      <div class="actions"><button class="btn primary">{{template "i-plus"}} Create environment</button></div>
+    </div>
+  </form>
+</section>
+{{end}}

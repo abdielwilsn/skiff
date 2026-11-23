@@ -21,14 +21,21 @@ import (
 type fakeServer struct {
 	mu      sync.Mutex
 	scripts []string
+	stdins  []string
+	respond func(script string, w io.Writer) bool // optional extra answers
 }
 
 func (f *fakeServer) Run(_ context.Context, script string, opt executor.Options, w io.Writer) error {
 	f.mu.Lock()
 	f.scripts = append(f.scripts, script)
-	f.mu.Unlock()
 	if opt.Stdin != nil {
-		_, _ = io.Copy(io.Discard, opt.Stdin)
+		b, _ := io.ReadAll(opt.Stdin)
+		f.stdins = append(f.stdins, string(b))
+	}
+	respond := f.respond
+	f.mu.Unlock()
+	if respond != nil && respond(script, w) {
+		return nil
 	}
 	switch {
 	case strings.Contains(script, `printf 'DB\t%s\t%s\n'`) && strings.Contains(script, "app.example.com"):

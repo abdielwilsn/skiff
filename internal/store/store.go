@@ -77,6 +77,8 @@ var migrations = []string{
 		created_at  INTEGER NOT NULL
 	)`,
 	`CREATE INDEX backups_source ON backups(source, created_at)`,
+	`ALTER TABLE sites ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'`,
+	`ALTER TABLE sites ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`,
 }
 
 const schemaV1 = `
@@ -309,6 +311,10 @@ const (
 	KindPython  = "python" // a Python app server (Django, FastAPI, Flask…) behind Nginx
 )
 
+// EnvProduction is the environment of every site that isn't another site's
+// staging (or other) environment.
+const EnvProduction = "production"
+
 // AppPortBase + site ID is the local port a Node or Python app listens on.
 const AppPortBase = 4100
 
@@ -335,6 +341,12 @@ type Site struct {
 	Scheduler     bool   // Laravel: run schedule:run every minute
 	PythonVersion string // Python apps: interpreter version, e.g. "3.13"
 
+	// Environments: a production site (ParentID 0) can have others, such as
+	// staging, that deploy the same repository from their own branch to their
+	// own domain, with their own .env and database.
+	Environment string // "production", "staging", …
+	ParentID    int64  // the production site; 0 for a production site
+
 	CreatedAt  time.Time
 	DeployedAt *time.Time
 }
@@ -343,6 +355,35 @@ func (x Site) IsLaravel() bool { return x.Kind == "" || x.Kind == KindLaravel }
 func (x Site) IsNode() bool    { return x.Kind == KindNode }
 func (x Site) IsStatic() bool  { return x.Kind == KindStatic }
 func (x Site) IsPython() bool  { return x.Kind == KindPython }
+
+// IsProduction reports whether this is a production site rather than one of
+// its other environments.
+func (x Site) IsProduction() bool { return x.ParentID == 0 }
+
+// RootID is the id of the production site this site belongs to.
+func (x Site) RootID() int64 {
+	if x.ParentID != 0 {
+		return x.ParentID
+	}
+	return x.ID
+}
+
+// EnvLabel is the environment's name for headings, e.g. "Staging".
+func (x Site) EnvLabel() string {
+	e := x.Environment
+	if e == "" {
+		e = EnvProduction
+	}
+	return strings.ToUpper(e[:1]) + e[1:]
+}
+
+// EnvName is the environment's name, e.g. "staging".
+func (x Site) EnvName() string {
+	if x.Environment == "" {
+		return EnvProduction
+	}
+	return x.Environment
+}
 
 // HasApp reports whether the site runs its own server process (Node or
 // Python) that Nginx proxies to.
@@ -369,7 +410,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, python_version, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, python_version, environment, parent_id, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -378,7 +419,7 @@ func scanSite(row scanner) (Site, error) {
 	var created int64
 	var deployed sql.NullInt64
 	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS,
-		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &x.PythonVersion, &created, &deployed)
+		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &x.PythonVersion, &x.Environment, &x.ParentID, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -391,9 +432,13 @@ func (s *Store) CreateSite(x Site) (int64, error) {
 	if x.Kind == "" {
 		x.Kind = KindLaravel
 	}
-	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, kind, start_command, output_dir, python_version, created_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew,
-		x.Kind, x.StartCommand, x.OutputDir, x.PythonVersion, now())
+	if x.Environment == "" {
+		x.Environment = EnvProduction
+	}
+	res, err := s.db.Exec(`INSERT INTO sites(domain, repo, branch, php_version, node_version, deploy_script, status, kind, start_command, output_dir, python_version,
+		worker_count, worker_options, scheduler, environment, parent_id, created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, x.Domain, x.Repo, x.Branch, x.PHPVersion, x.NodeVersion, x.DeployScript, SiteNew,
+		x.Kind, x.StartCommand, x.OutputDir, x.PythonVersion, x.WorkerCount, x.WorkerOptions, x.Scheduler, x.Environment, x.ParentID, now())
 	if isUnique(err) {
 		return 0, ErrDuplicate
 	}
@@ -450,6 +495,33 @@ func (s *Store) Sites() ([]Site, error) {
 		out = append(out, x)
 	}
 	return out, rows.Err()
+}
+
+// Environments returns every environment of the site's project: the
+// production site first, then the others by name.
+func (s *Store) Environments(site Site) ([]Site, error) {
+	root := site.RootID()
+	rows, err := s.db.Query(`SELECT `+siteCols+` FROM sites WHERE id = ? OR parent_id = ? ORDER BY parent_id <> 0, environment, domain`, root, root)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Site
+	for rows.Next() {
+		x, err := scanSite(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, x)
+	}
+	return out, rows.Err()
+}
+
+// ChildCount is how many other environments a production site has.
+func (s *Store) ChildCount(id int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sites WHERE parent_id = ?`, id).Scan(&n)
+	return n, err
 }
 
 func (s *Store) SetSiteStatus(id int64, status string) error {

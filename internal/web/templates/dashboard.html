@@ -3,7 +3,7 @@
 <div class="page-head">
   <div>
     <h1>Sites</h1>
-    <p class="page-sub">Laravel and JavaScript apps deployed on this server.</p>
+    <p class="page-sub">Laravel, JavaScript and Python apps deployed on this server.</p>
   </div>
   <div class="actions">
     <a class="btn primary" href="/sites/new">{{template "i-plus"}} New site</a>
@@ -52,8 +52,8 @@
   <label class="search"><span class="sr-only">Search sites</span>{{template "i-search"}}<input type="search" placeholder="Search sites…" data-filter="#site-grid > .site-card" autocomplete="off"></label>
 </div>
 <div class="grid-cards" id="site-grid">
-  {{range $d.Sites}}
-  <a class="card site-card" href="/sites/{{.ID}}" data-search="{{.Domain}} {{.Repo}} {{.KindLabel}}">
+  {{range $d.Sites}}{{$envs := index $d.Envs .ID}}
+  <a class="card site-card" href="/sites/{{.ID}}" data-search="{{.Domain}} {{.Repo}} {{.KindLabel}}{{range $envs}} {{.Domain}} {{.Environment}}{{end}}">
     <div class="site-card-head">
       <span class="monogram">{{initial .Domain}}</span>
       <div class="site-card-title">
@@ -70,6 +70,11 @@
       {{if .HTTPS}}<span class="meta">{{template "i-lock"}} HTTPS</span>{{end}}
       {{if .AutoDeploy}}<span class="meta" title="Deploys on every push to {{.Branch}}">{{template "i-zap"}} Auto-deploy</span>{{end}}
     </div>
+    {{if $envs}}
+    <div class="site-card-envs">
+      {{range $envs}}<span class="env-chip" title="{{.Domain}} · {{statusLabel .Status}}"><span class="status tone-{{statusTone .Status}}"><i></i></span>{{.Environment}}</span>{{end}}
+    </div>
+    {{end}}
     <div class="site-card-foot">
       {{template "status" .Status}}
       <span>{{if .DeployedAt}}{{ago .DeployedAt}}{{else}}never deployed{{end}}</span>

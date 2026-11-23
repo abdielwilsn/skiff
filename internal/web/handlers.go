@@ -34,7 +34,8 @@ type dashboardData struct {
 	Provisioned  bool
 	ProvisionJob *store.Job
 	PHPVersion   string
-	Sites        []store.Site
+	Sites        []store.Site           // production sites
+	Envs         map[int64][]store.Site // a production site's other environments
 	Jobs         []store.Job
 	GitHubLogin  string
 	Health       *laravel.Health // latest one-minute sample; nil until there is one
@@ -48,11 +49,12 @@ func (s *Server) dashboard(w http.ResponseWriter, r *http.Request, sess store.Se
 	if j, err := s.st.LatestJob("provision"); err == nil {
 		d.ProvisionJob = &j
 	}
-	var err error
-	if d.Sites, err = s.st.Sites(); err != nil {
+	all, err := s.st.Sites()
+	if err != nil {
 		s.serverError(w, err)
 		return
 	}
+	d.Sites, d.Envs = groupEnvironments(all)
 	if d.Jobs, err = s.st.RecentJobs(8); err != nil {
 		s.serverError(w, err)
 		return
@@ -144,7 +146,9 @@ func (s *Server) reposPage(w http.ResponseWriter, r *http.Request, sess store.Se
 	}
 	sites, _ := s.st.Sites()
 	for _, x := range sites {
-		d.SiteByRepo[x.Repo] = x.ID
+		if _, seen := d.SiteByRepo[x.Repo]; !seen || x.IsProduction() {
+			d.SiteByRepo[x.Repo] = x.RootID()
+		}
 	}
 	s.render(w, r, "repos", http.StatusOK, pageFor(sess, "Repositories", "repos", d))
 }
@@ -307,6 +311,12 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 // startDeploy queues a deploy. reason (optional) is shown in the job title,
 // e.g. "push a1b2c3d by abdiel".
 func (s *Server) startDeploy(site store.Site, reason string) (int64, error) {
+	return s.startDeployCommit(site, reason, "")
+}
+
+// startDeployCommit queues a deploy of one commit (a full hash), or of the
+// branch tip if commit is "".
+func (s *Server) startDeployCommit(site store.Site, reason, commit string) (int64, error) {
 	if err := s.st.SetSiteStatus(site.ID, store.SiteDeploying); err != nil {
 		return 0, err
 	}
@@ -334,7 +344,7 @@ func (s *Server) startDeploy(site store.Site, reason string) (int64, error) {
 			if err := s.backupBeforeDeploy(ctx, log, cur); err != nil {
 				return err
 			}
-			return s.deployer.Deploy(ctx, log, cur, s.githubToken(), spec)
+			return s.deployer.DeployCommit(ctx, log, cur, s.githubToken(), spec, commit)
 		},
 		func(err error) {
 			if err != nil {
@@ -737,7 +747,7 @@ func (s *Server) envPage(w http.ResponseWriter, r *http.Request, sess store.Sess
 		d.Error = "Could not read .env: " + err.Error()
 	}
 	d.Env = env
-	s.render(w, r, "site_env", http.StatusOK, sitePageFor(sess, site, "env", "Environment", d))
+	s.render(w, r, "site_env", http.StatusOK, sitePageFor(sess, site, "env", "Env variables", d))
 }
 
 func (s *Server) saveEnv(w http.ResponseWriter, r *http.Request, _ store.Session) {
@@ -776,6 +786,11 @@ func (s *Server) deleteSite(w http.ResponseWriter, r *http.Request, _ store.Sess
 	if busy, _ := s.st.HasActiveJob(site.ID); busy {
 		setFlash(w, "err", "Wait for the running job to finish before deleting this site.")
 		redirect(w, r, s.siteURL(site))
+		return
+	}
+	if n, _ := s.st.ChildCount(site.ID); n > 0 {
+		setFlash(w, "err", "Delete this site's other environments first (Environments page).")
+		redirect(w, r, s.siteURL(site)+"/settings#danger")
 		return
 	}
 	if r.FormValue("confirm") != site.Domain {

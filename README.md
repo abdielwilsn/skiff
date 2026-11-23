@@ -82,6 +82,7 @@ removed on the deploy after that.
 ## Deploying new commits
 
 **Deploy now** on a site always fetches the newest commit of its branch
+(**Promote to production** is the exception: it builds the commit staging runs)
 (`git fetch` + `git reset --hard`), then runs the deploy script.
 
 **Push to deploy**: in a site's **Settings → Git**, **Turn on** adds a webhook
@@ -96,6 +97,33 @@ a deploy; the job title shows the commit and who pushed it.
 - Pushes that arrive while a deploy is already queued are folded into it, since
   every deploy fetches the latest commit.
 - Turning auto-deploy off, or deleting the site, removes the webhook.
+
+## Staging and other environments
+
+A site's **Environments** page adds a staging (or preview, dev…) environment:
+the same repository and setup (project type, PHP/Node/Python version, deploy
+script, workers and scheduler), deployed from **its own branch** to **its own
+domain**. Each environment is a full site of its own, with its own releases,
+`.env`, logs, Commands, HTTPS and push-to-deploy webhook. Switch between them
+from the menu at the top of the site's sidebar.
+
+- **Variables**: by default the new environment starts with a copy of
+  production's `.env`. `APP_ENV` becomes the environment's name, `APP_URL` its
+  address, and URLs, allowed hosts and cookie domains that name production's
+  domain get the new one. Database, cache and mail settings are copied as they
+  are. Untick the box to start from `.env.example` instead.
+- **Database**: a Laravel site whose MySQL database Skiff manages gets a
+  separate database for each environment, so staging's migrations and test
+  data never touch production's. SQLite files are per environment anyway. If
+  production's `.env` points at a database server Skiff doesn't manage, change
+  the copy on the environment's **Env variables** page.
+- **Promote to production** deploys the exact commit an environment runs to
+  production, through production's normal deploy: backup first, deploy script,
+  migrations, health check, rollback if it fails. Production keeps following
+  its own branch, so merge the change there too; its next deploy or push
+  builds that branch's tip again.
+- A production site can't be deleted while it has other environments; delete
+  them first.
 
 ## Queue workers & scheduler (Laravel)
 

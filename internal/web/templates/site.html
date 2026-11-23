@@ -19,10 +19,14 @@
   </div>
 </div>
 
+{{if not $s.IsProduction}}{{with .Envs}}{{with index . 0}}
+<div class="flash flash-info env-callout">{{template "i-stack"}}<div>This is the <strong>{{$s.EnvName}}</strong> environment of <a href="/sites/{{.ID}}">{{.Domain}}</a>. When it looks right, <a href="/sites/{{$s.ID}}/environments">promote it to production</a>.</div></div>
+{{end}}{{end}}{{end}}
+
 <div class="grid-2">
   <section class="card">
     <div class="card-body stack">
-      <h2>Production</h2>
+      <div class="card-title-row"><h2>{{$s.EnvLabel}}</h2>{{if gt (len .Envs) 1}}<a class="link small" href="/sites/{{$s.ID}}/environments">{{len .Envs}} environments</a>{{else}}<a class="link small" href="/sites/{{$s.ID}}/environments#new">Add staging</a>{{end}}</div>
       <dl class="facts">
         <div><dt>Domain</dt><dd>{{if $s.HTTPS}}{{template "i-lock"}}{{else}}{{template "i-globe"}}{{end}}<a href="{{$s.Scheme}}://{{$s.Domain}}" target="_blank" rel="noopener noreferrer">{{$s.Domain}}</a></dd></div>
         <div><dt>Status</dt><dd>{{template "status" $s.Status}}</dd></div>

@@ -177,6 +177,9 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /sites/{id}", s.auth(s.sitePage))
 	m.HandleFunc("GET /sites/{id}/deployments", s.auth(s.siteDeploymentsPage))
 	m.HandleFunc("GET /sites/{id}/settings", s.auth(s.siteSettingsPage))
+	m.HandleFunc("GET /sites/{id}/environments", s.auth(s.environmentsPage))
+	m.HandleFunc("POST /sites/{id}/environments", s.auth(s.createEnvironment))
+	m.HandleFunc("POST /sites/{id}/promote", s.auth(s.promote))
 	m.HandleFunc("POST /sites/{id}/deploy", s.auth(s.deploySite))
 	m.HandleFunc("POST /sites/{id}/rollback", s.auth(s.rollback))
 	m.HandleFunc("POST /sites/{id}/app", s.auth(s.saveAppSettings))
@@ -298,8 +301,9 @@ type page struct {
 	Nav   string // global section: sites, repos, databases, settings
 	// Site pages switch the sidebar to the site's own navigation.
 	Site    *store.Site
-	SiteNav string // overview, deployments, env, commands, logs, settings
-	Crumb   string // last breadcrumb on site pages ("" on the overview)
+	Envs    []store.Site // the site's environments, production first
+	SiteNav string       // overview, deployments, environments, env, commands, logs, settings
+	Crumb   string       // last breadcrumb on site pages ("" on the overview)
 	User    string
 	CSRF    string
 	Flash   flash
@@ -399,6 +403,9 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, sta
 		p.Host = h
 	}
 	p.Version = s.cfg.Version
+	if p.Site != nil {
+		p.Envs, _ = s.st.Environments(*p.Site)
+	}
 	t, ok := s.pages[name]
 	if !ok {
 		http.Error(w, "unknown page "+name, http.StatusInternalServerError)

@@ -93,13 +93,15 @@ func TestFailedDeployNeverGoesLive(t *testing.T) {
 }
 
 func TestReleasesParsingAndRollback(t *testing.T) {
-	out := "noise line\n20261122141530\t1\tabc1234 feat: staff portal\n20261121093012\t0\tdef5678 fix\nbad\t1\tx\n"
+	sha := strings.Repeat("ab", 20)
+	out := "noise line\n20261122141530\t1\t" + sha + "\tabc1234 feat: staff portal\n20261121093012\t0\t\tdef5678 fix\nbad\t1\tx\n"
 	d := &Deployer{Exec: printer(out)}
 	list, err := d.Releases(context.Background(), testSite)
 	if err != nil || len(list) != 2 {
 		t.Fatalf("Releases = %+v, %v", list, err)
 	}
-	if !list[0].Current || list[0].Revision != "abc1234 feat: staff portal" || list[1].Current || list[0].Built.IsZero() {
+	if !list[0].Current || list[0].Revision != "abc1234 feat: staff portal" || list[0].Commit != sha ||
+		list[1].Current || list[1].Commit != "" || list[1].Revision != "def5678 fix" || list[0].Built.IsZero() {
 		t.Fatalf("parsed %+v", list)
 	}
 	f := &failAt{}
@@ -127,4 +129,45 @@ type printer string
 func (p printer) Run(_ context.Context, _ string, _ executor.Options, w io.Writer) error {
 	_, err := io.WriteString(w, string(p))
 	return err
+}
+
+func TestEnvForEnvironment(t *testing.T) {
+	in := "APP_ENV=production\nAPP_URL=https://app.example.com\nASSET_URL=https://cdn.other.net\n" +
+		"ALLOWED_HOSTS=app.example.com,www.app.example.com\nSESSION_DOMAIN=.app.example.com\n" +
+		"DB_HOST=app.example.com\nREDIS_HOST=app.example.com\nMAIL_FROM_ADDRESS=hi@app.example.com\n" +
+		"NEXT_PUBLIC_SITE_URL=\"https://app.example.com/\"\nOTHER_URL=https://myapp.example.com\n# APP_URL=https://app.example.com\n"
+	out, changed := EnvForEnvironment(in, "staging", "app.example.com", "staging.app.example.com", "https")
+	for _, want := range []string{
+		"APP_ENV=staging\n", "APP_URL=https://staging.app.example.com\n", "ASSET_URL=https://cdn.other.net\n",
+		"ALLOWED_HOSTS=staging.app.example.com,www.staging.app.example.com\n", "SESSION_DOMAIN=.staging.app.example.com\n",
+		"DB_HOST=app.example.com\n", "REDIS_HOST=app.example.com\n", "MAIL_FROM_ADDRESS=hi@app.example.com\n",
+		"NEXT_PUBLIC_SITE_URL=\"https://staging.app.example.com/\"\n", "OTHER_URL=https://myapp.example.com\n",
+		"# APP_URL=https://app.example.com\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Join(changed, ",") != "APP_ENV,APP_URL,ALLOWED_HOSTS,SESSION_DOMAIN,NEXT_PUBLIC_SITE_URL" {
+		t.Errorf("changed = %v", changed)
+	}
+	// APP_URL that names another host (or an IP) still gets the environment's.
+	out, _ = EnvForEnvironment("APP_URL=http://203.0.113.7\n", "staging", "203.0.113.7", "staging.example.com", "http")
+	if out != "APP_URL=http://staging.example.com\n" {
+		t.Errorf("ip APP_URL: %q", out)
+	}
+}
+
+func TestDeployCommit(t *testing.T) {
+	f := &failAt{}
+	sha := strings.Repeat("ab", 20)
+	if err := (&Deployer{Exec: f}).DeployCommit(context.Background(), &bytes.Buffer{}, testSite, "", nil, sha); err != nil {
+		t.Fatal(err)
+	}
+	if !f.ran("REF='"+sha+"'") || !f.ran(`rev-parse HEAD > "$REL/.skiff-commit"`) {
+		t.Errorf("scripts: %v", f.scripts)
+	}
+	if err := (&Deployer{Exec: f}).DeployCommit(context.Background(), &bytes.Buffer{}, testSite, "", nil, "main; rm -rf /"); err == nil {
+		t.Error("accepted a bad commit")
+	}
 }
