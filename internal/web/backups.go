@@ -102,8 +102,9 @@ func backupHost() string {
 type backupSource struct {
 	ID         string // store.Backup.Source
 	Label      string
-	Kind       string // "mysql" or "sqlite"
-	DB         string // MySQL database name
+	Kind       string // "mysql", "postgres" or "sqlite"
+	DB         string // MySQL/PostgreSQL database name
+	User       string // PostgreSQL: the database's owner
 	Domain     string // SQLite: the site it belongs to
 	Rel        string // SQLite: path inside the site's shared/
 	SiteID     *int64
@@ -112,21 +113,37 @@ type backupSource struct {
 }
 
 func (b backupSource) slug() string {
-	if b.Kind == "mysql" {
-		return "mysql-" + b.DB
+	if b.Kind != "sqlite" {
+		return b.Kind + "-" + b.DB
 	}
 	return "sqlite-" + b.Domain + "-" + strings.ReplaceAll(b.Rel, "/", "_")
 }
 
 func (b backupSource) ext() string {
-	if b.Kind == "mysql" {
+	if b.Kind != "sqlite" {
 		return "sql"
 	}
 	return "sqlite"
 }
 
-func mysqlSource(db store.Database) backupSource {
-	return backupSource{ID: "mysql:" + db.Name, Label: db.Name, Kind: "mysql", DB: db.Name, SiteID: db.SiteID, SiteDomain: db.SiteDomain}
+// KindLabel is the engine's display name.
+func (b backupSource) KindLabel() string {
+	switch b.Kind {
+	case "mysql":
+		return "MySQL"
+	case "postgres":
+		return "PostgreSQL"
+	}
+	return "SQLite"
+}
+
+// dbSource is the backup source of a MySQL or PostgreSQL database.
+func dbSource(db store.Database) backupSource {
+	kind := store.EngineMySQL
+	if db.IsPostgres() {
+		kind = store.EnginePostgres
+	}
+	return backupSource{ID: kind + ":" + db.Name, Label: db.Name, Kind: kind, DB: db.Name, User: db.Username, SiteID: db.SiteID, SiteDomain: db.SiteDomain}
 }
 
 func sqliteSource(site store.Site, rel string) backupSource {
@@ -137,7 +154,7 @@ func sqliteSource(site store.Site, rel string) backupSource {
 	}
 }
 
-// backupSources lists every database on the server: ready MySQL databases and
+// backupSources lists every database on the server: ready MySQL and PostgreSQL databases and
 // the non-empty SQLite databases of deployed Laravel and Python sites. If only
 // is non-nil, just that site's databases.
 func (s *Server) backupSources(ctx context.Context, only *store.Site) ([]backupSource, error) {
@@ -153,7 +170,7 @@ func (s *Server) backupSources(ctx context.Context, only *store.Site) ([]backupS
 		if only != nil && (db.SiteID == nil || *db.SiteID != only.ID) {
 			continue
 		}
-		out = append(out, mysqlSource(db))
+		out = append(out, dbSource(db))
 	}
 	sites, err := s.st.Sites()
 	if err != nil {
@@ -196,17 +213,17 @@ func (s *Server) backupSources(ctx context.Context, only *store.Site) ([]backupS
 func (s *Server) sourceOf(id string) (backupSource, error) {
 	kind, rest, _ := strings.Cut(id, ":")
 	switch kind {
-	case "mysql":
+	case store.EngineMySQL, store.EnginePostgres:
 		dbs, err := s.st.Databases()
 		if err != nil {
 			return backupSource{}, err
 		}
 		for _, db := range dbs {
-			if db.Name == rest && db.Status == store.DBReady {
-				return mysqlSource(db), nil
+			if db.Name == rest && db.Status == store.DBReady && db.Engine == kind {
+				return dbSource(db), nil
 			}
 		}
-		return backupSource{}, fmt.Errorf("the MySQL database %s doesn't exist any more", rest)
+		return backupSource{}, fmt.Errorf("the %s database %s doesn't exist any more", engineLabel(kind), rest)
 	case "sqlite":
 		domain, rel, _ := strings.Cut(rest, ":")
 		if _, ok := laravel.SQLitePath(domain, rel); !ok {
@@ -238,9 +255,12 @@ func (s *Server) runBackup(ctx context.Context, w io.Writer, src backupSource, r
 		return err
 	}
 	var size int64
-	if src.Kind == "mysql" {
+	switch src.Kind {
+	case store.EngineMySQL:
 		size, err = s.deployer.BackupMySQL(ctx, w, src.DB, file)
-	} else {
+	case store.EnginePostgres:
+		size, err = s.deployer.BackupPostgres(ctx, w, src.DB, file)
+	default:
 		path, _ := laravel.SQLitePath(src.Domain, src.Rel)
 		size, err = s.deployer.BackupSQLite(ctx, w, path, file)
 	}
@@ -314,7 +334,7 @@ func (s *Server) backupAll(ctx context.Context, w io.Writer, reason string) erro
 		return err
 	}
 	if len(srcs) == 0 {
-		fmt.Fprintln(w, "No databases to back up yet: no MySQL databases, and no deployed site has a SQLite database.")
+		fmt.Fprintln(w, "No databases to back up yet: no MySQL or PostgreSQL databases, and no deployed site has a SQLite database.")
 		return nil
 	}
 	failed := 0
@@ -620,7 +640,7 @@ func (s *Server) restore(ctx context.Context, w io.Writer, src backupSource, b s
 	// 1. Keep what's there now, in case the restore was a mistake.
 	fmt.Fprintln(w, "Taking a safety backup of the current data first.")
 	if err := s.runBackup(ctx, w, src, store.BackupRestore); err != nil {
-		if src.Kind == "mysql" {
+		if src.Kind != "sqlite" {
 			return fmt.Errorf("%w; nothing was restored", err)
 		}
 		fmt.Fprintf(w, "No safety backup (%v); continuing.\n", err)
@@ -637,9 +657,12 @@ func (s *Server) restore(ctx context.Context, w io.Writer, src backupSource, b s
 	}
 	// 3. Restore.
 	var err error
-	if src.Kind == "mysql" {
+	switch src.Kind {
+	case store.EngineMySQL:
 		err = s.deployer.RestoreMySQL(ctx, w, src.DB, b.Path)
-	} else {
+	case store.EnginePostgres:
+		err = s.deployer.RestorePostgres(ctx, w, src.DB, src.User, b.Path)
+	default:
 		path, _ := laravel.SQLitePath(src.Domain, src.Rel)
 		err = s.deployer.RestoreSQLite(ctx, w, path, b.Path)
 	}

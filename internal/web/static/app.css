@@ -194,6 +194,16 @@ strong { font-weight: 600; }
 }
 .menu-item:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* Databases page */
+.service-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.service-card { display: flex; flex-direction: column; }
+.service-card .card-body { flex: 1; }
+.service-card h2 .icon { width: 18px; height: 18px; color: var(--fg-muted); }
+.kv.compact { grid-template-columns: 80px 1fr; gap: 8px 12px; font-size: 13px; }
+.check-inline { align-self: end; padding-bottom: 6px; }
+label.check-sm { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; font-size: 13px; font-weight: 400; color: var(--fg-muted); margin: 0 4px 0 0; cursor: pointer; white-space: nowrap; }
+label.check-sm input { width: 14px; height: 14px; margin: 0; padding: 0; accent-color: var(--fg); flex: none; }
+
 /* Environments */
 .env-tag {
   display: inline-flex; align-items: center; height: 18px; padding: 0 7px; border-radius: 999px;

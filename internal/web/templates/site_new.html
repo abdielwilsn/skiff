@@ -83,17 +83,20 @@
         <span class="field-hint">Builds front-end assets, and runs Node apps. Installed on the first deploy.</span>
       </label>
     </div>
-    <div data-kinds="laravel">
-    {{if $d.MySQL}}
-    <label class="check">
-      <input type="checkbox" name="mysql" value="1" {{if $d.CreateDB}}checked{{end}}>
-      <span>Create a MySQL database for this site
-        <span class="field-hint">Skiff creates a database and user, and writes the <code>DB_*</code> settings into <code>.env</code> before migrations run.</span>
-      </span>
-    </label>
-    {{else}}
-    <p class="hint">The site will use SQLite. For MySQL, <a href="/databases">install it on the Databases page</a> first.</p>
-    {{end}}
+    <div class="form-grid" data-kinds="laravel python node">
+      <label>Database
+        <select name="database" id="database">
+          <option value="" {{if not $d.Engine}}selected{{end}}>None (SQLite, or set in .env)</option>
+          {{range $d.Engines}}<option value="{{.}}" {{if eq . $d.Engine}}selected{{end}}>New {{engineLabel .}} database</option>{{end}}
+        </select>
+        <span class="field-hint">{{if $d.Engines}}Created before the first deploy, with its settings written into <code>.env</code>: <code>DB_*</code> for Laravel, <code>DATABASE_URL</code> for other apps.{{else}}<a href="/databases">Install MySQL or PostgreSQL</a> to create one here.{{end}}</span>
+      </label>
+      <label class="check check-inline">
+        <input type="checkbox" name="redis" value="1" {{if $d.UseRedis}}checked{{end}} {{if not $d.Redis}}disabled{{end}}>
+        <span>Use Redis
+          <span class="field-hint">{{if $d.Redis}}Laravel: cache, sessions and queue on Redis, with this site's own key prefix. Other apps get <code>REDIS_URL</code>.{{else}}<a href="/databases">Install Redis</a> first.{{end}}</span>
+        </span>
+      </label>
     </div>
   </div>
   <div class="card-footer">

@@ -100,6 +100,10 @@
         el.hidden = el.getAttribute("data-kinds").split(" ").indexOf(kind) === -1;
       });
       if (!fill) return;
+      // A database is the usual choice for Laravel, not for JS or Python apps,
+      // unless the user picked one.
+      var db = document.getElementById("database");
+      if (db && !db.dataset.touched && db.options.length > 1) db.value = kind === "laravel" ? db.options[1].value : "";
       [["start_command", "start", "data-start"], ["output_dir", "output", "data-output"]].forEach(function (f) {
         var input = document.getElementById(f[0]);
         if (input && (input.value === "" || input.value === lastDefaults[f[1]])) input.value = opt.getAttribute(f[2]);
@@ -109,6 +113,8 @@
     lastDefaults.start = (document.getElementById("start_command") || {}).value || "";
     lastDefaults.output = (document.getElementById("output_dir") || {}).value || "";
     fw.addEventListener("change", function () { applyFramework(true); });
+    var dbSel = document.getElementById("database");
+    if (dbSel) dbSel.addEventListener("change", function () { dbSel.dataset.touched = "1"; });
     applyFramework(false);
   }
 

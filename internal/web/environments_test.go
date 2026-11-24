@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -186,5 +187,77 @@ func TestPromoteDeploysStagingCommit(t *testing.T) {
 	}
 	if f.ran("REF='"+sha+"'") != 1 || f.ran("SITE='/home/skiff/app.example.com'\nREPO=") != 1 {
 		t.Error("production should be built from staging's commit")
+	}
+}
+
+func TestPostgresAndRedisForSites(t *testing.T) {
+	s, f := newFakeServer(t)
+	_ = s.st.SetSetting(keyPostgresInstalled, "1")
+	// Redis: installing generates and stores a password.
+	r := httptest.NewRequest(http.MethodPost, "/", nil)
+	r.SetPathValue("service", "redis")
+	s.installService(httptest.NewRecorder(), r, store.Session{})
+	waitJobs(t, s)
+	pw := s.redisPassword()
+	if len(pw) < 16 || f.ran("requirepass $SKIFF_REDIS_PASSWORD") != 1 {
+		t.Fatalf("redis install: password %q", pw)
+	}
+
+	// A Django site with a new PostgreSQL database and Redis.
+	form := url.Values{"repo": {"o/dj"}, "branch": {"main"}, "domain": {"dj.example.com"}, "framework": {"django"}, "python": {"3.13"}, "database": {"postgres"}, "redis": {"1"}}
+	if w := postNewSite(s, form); w.Code != http.StatusSeeOther {
+		t.Fatalf("create: %d %s", w.Code, w.Body.String())
+	}
+	waitJobs(t, s)
+	sites, _ := s.st.Sites()
+	dj := sites[0]
+	db, err := s.st.DatabaseForSite(dj.ID)
+	if err != nil || !db.IsPostgres() || db.Status != store.DBReady || !dj.Redis {
+		t.Fatalf("site %+v, db %+v %v", dj, db, err)
+	}
+	if f.ran("CREATE ROLE") == 0 && f.ran("runuser -u postgres -- psql") == 0 {
+		t.Error("the PostgreSQL database wasn't created")
+	}
+	if f.ran("set_env DATABASE_URL \"postgres://") != 1 || f.ran("set_env REDIS_URL") != 1 {
+		t.Error("the first deploy should write DATABASE_URL and REDIS_URL")
+	}
+
+	// Its backups use pg_dump, and restore loads the dump as the owner.
+	srcs, _ := s.backupSources(context.Background(), nil)
+	if len(srcs) == 0 || srcs[0].ID != "postgres:dj_example_com" || srcs[0].KindLabel() != "PostgreSQL" {
+		t.Fatalf("sources = %+v", srcs)
+	}
+	if err := s.runBackup(context.Background(), io.Discard, srcs[0], store.BackupManual); err != nil {
+		t.Fatal(err)
+	}
+	if f.ran("pg_dump --no-owner --no-privileges dj_example_com") != 1 {
+		t.Error("expected a pg_dump")
+	}
+
+	// A MySQL database can't be created while MySQL isn't installed.
+	bad := url.Values{"repo": {"o/x"}, "branch": {"main"}, "domain": {"x.example.com"}, "framework": {"laravel"}, "php": {"8.4"}, "node": {"24"}, "database": {"mysql"}}
+	if w := postNewSite(s, bad); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("MySQL database accepted without MySQL: %d", w.Code)
+	}
+
+	// Staging of a site with PostgreSQL and Redis gets its own database and prefix.
+	if w := sitePost(s, s.createEnvironment, dj.ID, url.Values{"name": {"staging"}, "domain": {"staging.dj.example.com"}, "branch": {"develop"}}); w.Code != http.StatusSeeOther {
+		t.Fatalf("staging: %d %s", w.Code, w.Body.String())
+	}
+	waitJobs(t, s)
+	envs, _ := s.st.Environments(dj)
+	sdb, err := s.st.DatabaseForSite(envs[1].ID)
+	if err != nil || !sdb.IsPostgres() || sdb.Name == db.Name || !envs[1].Redis {
+		t.Errorf("staging db %+v %v, redis %v", sdb, err, envs[1].Redis)
+	}
+
+	// Pages render.
+	rr := httptest.NewRecorder()
+	s.databasesPage(rr, httptest.NewRequest(http.MethodGet, "/", nil), store.Session{Username: "admin"})
+	if body := rr.Body.String(); !strings.Contains(body, "PostgreSQL") || !strings.Contains(body, "dj_example_com") || !strings.Contains(body, "127.0.0.1:6379") {
+		t.Error("databases page should list the PostgreSQL database and Redis")
+	}
+	if body := siteGet(t, s, s.sitePage, dj.ID); !strings.Contains(body, "PostgreSQL · dj_example_com") || !strings.Contains(body, "Connected") {
+		t.Error("site page should show its PostgreSQL database and Redis")
 	}
 }

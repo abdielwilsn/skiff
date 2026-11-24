@@ -88,13 +88,24 @@ if [ -d "$SITE/shared" ]; then ENVF="$SITE/shared/.env"; else ENVF="$SITE/.env";
 // it, and only then makes it live. token may be empty for public repos; if db
 // is non-nil the database is created and written into .env first.
 func (d *Deployer) Deploy(ctx context.Context, w io.Writer, site store.Site, token string, db *DBSpec) error {
-	return d.DeployCommit(ctx, w, site, token, db, "")
+	return d.DeployWith(ctx, w, site, token, DeployOptions{DB: db})
 }
 
-// DeployCommit is Deploy, but builds the given commit (a full hash) instead
-// of the tip of the site's branch: how a commit tested on staging is promoted
-// to production. "" means the branch tip.
-func (d *Deployer) DeployCommit(ctx context.Context, w io.Writer, site store.Site, token string, db *DBSpec, commit string) error {
+// DeployOptions are the extras of one deploy.
+type DeployOptions struct {
+	// DB, if set, is created and written into .env before the deploy script.
+	DB *DBSpec
+	// Commit (a full hash) is built instead of the tip of the site's branch:
+	// how a commit tested on staging is promoted to production.
+	Commit string
+	// RedisPassword, if set, points the .env at the server's Redis (with
+	// Laravel's cache, sessions and queue on Redis) before the deploy script.
+	RedisPassword string
+}
+
+// DeployWith is Deploy with options.
+func (d *Deployer) DeployWith(ctx context.Context, w io.Writer, site store.Site, token string, opt DeployOptions) error {
+	db, commit := opt.DB, opt.Commit
 	if commit != "" && !ValidCommit(commit) {
 		return fmt.Errorf("invalid commit %q", commit)
 	}
@@ -140,7 +151,7 @@ echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.R
 		return fmt.Errorf("fetch code: %w", err)
 	}
 
-	if err := d.buildRelease(ctx, w, site, dir, rel, id, db); err != nil {
+	if err := d.buildRelease(ctx, w, site, dir, rel, id, db, opt.RedisPassword); err != nil {
 		d.discardRelease(ctx, w, rel)
 		fmt.Fprintln(w, "\nThe live site was not changed.")
 		return err
@@ -251,7 +262,7 @@ service nginx reload%[4]s`, conf, q(nginxEnabledPath(site.Domain)), update, relo
 }
 
 // buildRelease prepares the release directory and runs the deploy script in it.
-func (d *Deployer) buildRelease(ctx context.Context, w io.Writer, site store.Site, dir, rel, id string, db *DBSpec) error {
+func (d *Deployer) buildRelease(ctx context.Context, w io.Writer, site store.Site, dir, rel, id string, db *DBSpec, redisPassword string) error {
 	q := shell.Quote
 	step(w, "Preparing environment")
 	kind := site.Kind
@@ -344,11 +355,21 @@ echo "OK"`, q(dir), q(rel), site.Domain, kind)
 			return err
 		}
 	}
+	if redisPassword != "" {
+		if err := d.WriteRedisEnv(ctx, w, site, redisPassword, true); err != nil {
+			return err
+		}
+	}
 
 	switch {
 	case site.IsLaravel():
 		if err := d.EnsurePHP(ctx, w, site.PHPVersion); err != nil {
 			return err
+		}
+		if site.Redis {
+			if err := d.EnsurePHPRedis(ctx, w, site.PHPVersion); err != nil {
+				return err
+			}
 		}
 	case site.IsPython():
 		if err := d.EnsurePython(ctx, w, site.PythonVersion); err != nil {

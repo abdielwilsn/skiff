@@ -161,13 +161,13 @@ func TestEnvForEnvironment(t *testing.T) {
 func TestDeployCommit(t *testing.T) {
 	f := &failAt{}
 	sha := strings.Repeat("ab", 20)
-	if err := (&Deployer{Exec: f}).DeployCommit(context.Background(), &bytes.Buffer{}, testSite, "", nil, sha); err != nil {
+	if err := (&Deployer{Exec: f}).DeployWith(context.Background(), &bytes.Buffer{}, testSite, "", DeployOptions{Commit: sha}); err != nil {
 		t.Fatal(err)
 	}
 	if !f.ran("REF='"+sha+"'") || !f.ran(`rev-parse HEAD > "$REL/.skiff-commit"`) {
 		t.Errorf("scripts: %v", f.scripts)
 	}
-	if err := (&Deployer{Exec: f}).DeployCommit(context.Background(), &bytes.Buffer{}, testSite, "", nil, "main; rm -rf /"); err == nil {
+	if err := (&Deployer{Exec: f}).DeployWith(context.Background(), &bytes.Buffer{}, testSite, "", DeployOptions{Commit: "main; rm -rf /"}); err == nil {
 		t.Error("accepted a bad commit")
 	}
 }

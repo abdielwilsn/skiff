@@ -57,7 +57,7 @@ type environmentsData struct {
 	CopyEnv              bool
 	Error                string
 	Database             *store.Database // production's Skiff-managed database, if any
-	MySQL                bool
+	EngineReady          bool            // its engine is installed, so the environment gets its own
 }
 
 // liveRelease returns the release a site serves, if it has been deployed.
@@ -103,8 +103,8 @@ func (s *Server) environmentsData(ctx context.Context, site store.Site, d enviro
 	}
 	if db, err := s.st.DatabaseForSite(d.Production.ID); err == nil {
 		d.Database = &db
+		d.EngineReady = s.engineInstalled(db.Engine)
 	}
-	d.MySQL = s.mysqlInstalled()
 	if d.Name == "" && d.Error == "" {
 		d.Name, d.Branch, d.CopyEnv = "staging", "staging", true
 		for _, e := range envs {
@@ -204,16 +204,24 @@ func (s *Server) createEnvironment(w http.ResponseWriter, r *http.Request, sess 
 		return
 	}
 
-	// A Laravel site whose MySQL database Skiff manages gets a separate one,
-	// so the environment's migrations and test data never touch production's.
+	// A site whose database Skiff manages gets a separate one, so the
+	// environment's migrations and test data never touch production's.
 	var ownDB string
-	if _, err := s.st.DatabaseForSite(prod.ID); err == nil && prod.IsLaravel() && s.mysqlInstalled() {
-		db, err := s.newDatabaseRecord(laravel.DBNameFor(env.Domain), &env.ID)
+	if pdb, err := s.st.DatabaseForSite(prod.ID); err == nil && s.engineInstalled(pdb.Engine) {
+		db, err := s.newDatabaseRecord(pdb.Engine, laravel.DBNameFor(env.Domain), &env.ID)
 		if err != nil {
 			s.serverError(w, err)
 			return
 		}
 		ownDB = db.Name
+	}
+	// Redis too: the environment gets its own key prefix on its first deploy.
+	if prod.Redis && s.redisPassword() != "" {
+		if err := s.st.SetSiteRedis(env.ID, true); err != nil {
+			s.serverError(w, err)
+			return
+		}
+		env.Redis = true
 	}
 
 	if d.CopyEnv {

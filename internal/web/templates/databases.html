@@ -4,35 +4,49 @@
 <div class="page-head">
   <div>
     <h1>Databases</h1>
-    <p class="page-sub">MySQL databases on this server. Apps connect to <code>127.0.0.1:3306</code>.</p>
+    <p class="page-sub">MySQL, PostgreSQL and Redis on this server, installed when you need them. They listen on localhost only.</p>
   </div>
 </div>
 
-{{if not $d.Installed}}
-<section class="card">
-  <div class="card-body callout">
-    <span class="callout-icon">{{template "i-db"}}</span>
-    <div class="grow">
-      <h2>Install MySQL</h2>
-      <p class="muted">Skiff installs MySQL 8 only when you need it. It listens on localhost only, and on servers with less than 2 GB of RAM it's tuned to use about 150 MB instead of 400+ MB.</p>
+<div class="service-grid">
+{{range $d.Services}}
+  <section class="card service-card">
+    <div class="card-body stack">
+      <div class="card-title-row">
+        <h2 class="row">{{template "i-db"}} {{.Name}}</h2>
+        {{if .Installed}}<span class="status tone-ok"><i></i>Installed</span>{{end}}
+      </div>
+      <p class="muted">{{.Blurb}}</p>
+      {{if and .Installed (eq .ID "redis")}}
+      <dl class="kv compact">
+        <dt>Address</dt><dd><code>127.0.0.1:6379</code></dd>
+        <dt>Password</dt><dd><details class="secret"><summary>Show</summary><code>{{$d.RedisPass}}</code></details></dd>
+        <dt>Used by</dt><dd>{{range $i, $x := $d.RedisSites}}{{if $i}}, {{end}}<a class="link" href="/sites/{{$x.ID}}">{{$x.Domain}}</a>{{else}}<span class="muted">No sites yet. Connect one from its Overview.</span>{{end}}</dd>
+      </dl>
+      {{end}}
     </div>
-  </div>
-  <div class="card-footer">
-    {{with $d.InstallJob}}
-      {{if not .Done}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">Watch the log</a></span>
-      {{else if eq .Status "failed"}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">See why</a></span>
-      {{else}}<span>Takes about a minute.</span>{{end}}
-    {{else}}<span>Takes about a minute.</span>{{end}}
-    {{if or (not $d.InstallJob) $d.InstallJob.Done}}
-    <form method="post" action="/databases/install" class="actions">
-      <input type="hidden" name="csrf" value="{{$csrf}}">
-      <button class="btn primary">Install MySQL</button>
-    </form>
+    {{if not .Installed}}
+    <div class="card-footer">
+      {{with .Job}}
+        {{if not .Done}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">Watch the log</a></span>
+        {{else if eq .Status "failed"}}<span class="row">{{template "status" .Status}} <a class="link" href="/jobs/{{.ID}}">See why</a></span>
+        {{else}}<span>About a minute.</span>{{end}}
+      {{else}}<span>About a minute.</span>{{end}}
+      {{if or (not .Job) .Job.Done}}
+      <form method="post" action="/services/{{.ID}}/install" class="actions">
+        <input type="hidden" name="csrf" value="{{$csrf}}">
+        <button class="btn primary" {{if not $d.Provisioned}}disabled title="Prepare the server first"{{end}}>Install {{.Name}}</button>
+      </form>
+      {{end}}
+    </div>
     {{end}}
-  </div>
-</section>
-{{else}}
+  </section>
+{{end}}
+</div>
 
+{{if $d.Installed}}
+<section class="section">
+<div class="section-head"><h2>Databases</h2><span class="hint">Each has its own user with a random password. Browse them from your computer through an SSH tunnel.</span></div>
 {{if $d.Databases}}
 <div class="card table-wrap">
 <table class="table">
@@ -40,7 +54,7 @@
   <tbody>
   {{range $d.Databases}}
   <tr>
-    <td><span class="row">{{template "i-db"}}<strong>{{.Name}}</strong></span><div class="subtle small">Created {{ago .CreatedAt}}</div></td>
+    <td><span class="row">{{template "i-db"}}<strong>{{.Name}}</strong><span class="badge">{{.EngineLabel}}</span></span><div class="subtle small">Created {{ago .CreatedAt}}</div></td>
     <td>
       <code>{{.Username}}</code>
       <details class="secret"><summary>Show password</summary><code>{{.Password}}</code></details>
@@ -89,9 +103,11 @@
 <div class="empty">
   <span class="callout-icon">{{template "i-db"}}</span>
   <h2>No databases yet</h2>
-  <p class="muted">Tick "Create a MySQL database" when adding a site, or create one below.</p>
+  <p class="muted">Choose a database when adding a site, or create one below.</p>
 </div>
 {{end}}
+
+</section>
 
 <section class="section">
   <form method="post" action="/databases" class="card">
@@ -101,12 +117,19 @@
         <h2>New database</h2>
         <p class="muted">A user with the same name and a random password is created with full access to it.</p>
       </div>
-      <label>Name
-        <input name="name" required pattern="[a-z][a-z0-9_]{0,31}" placeholder="shop" spellcheck="false" autocomplete="off">
-      </label>
+      <div class="form-grid">
+        <label>Name
+          <input name="name" required pattern="[a-z][a-z0-9_]{0,31}" placeholder="shop" spellcheck="false" autocomplete="off">
+        </label>
+        <label>Engine
+          <select name="engine">
+            {{range $d.Engines}}<option value="{{.}}">{{engineLabel .}}</option>{{end}}
+          </select>
+        </label>
+      </div>
     </div>
     <div class="card-footer">
-      <span>Lowercase letters, digits and underscores. To browse from your computer, use an SSH tunnel.</span>
+      <span>Lowercase letters, digits and underscores.</span>
       <div class="actions"><button class="btn primary">Create</button></div>
     </div>
   </form>

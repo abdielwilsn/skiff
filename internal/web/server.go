@@ -190,6 +190,7 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /sites/{id}/php", s.auth(s.setPHP))
 	m.HandleFunc("POST /sites/{id}/node", s.auth(s.setNode))
 	m.HandleFunc("POST /sites/{id}/python", s.auth(s.setPython))
+	m.HandleFunc("POST /sites/{id}/redis", s.auth(s.useRedis))
 	m.HandleFunc("POST /sites/{id}/autodeploy", s.auth(s.enableAutoDeploy))
 	m.HandleFunc("POST /sites/{id}/autodeploy/disable", s.auth(s.disableAutoDeploy))
 
@@ -205,7 +206,7 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /databases", s.auth(s.databasesPage))
 	m.HandleFunc("POST /databases", s.auth(s.createDatabase))
-	m.HandleFunc("POST /databases/install", s.auth(s.installMySQL))
+	m.HandleFunc("POST /services/{service}/install", s.auth(s.installService))
 	m.HandleFunc("POST /databases/{id}/retry", s.auth(s.retryDatabase))
 	m.HandleFunc("POST /databases/{id}/attach", s.auth(s.attachDatabase))
 	m.HandleFunc("POST /databases/{id}/detach", s.auth(s.detachDatabase))
@@ -320,6 +321,7 @@ func (s *Server) loadTemplates() error {
 		"statusTone":  func(s string) string { return statusOf(s).tone },
 		"statusPulse": func(s string) bool { return statusOf(s).pulse },
 		"bytes":       humanBytes,
+		"engineLabel": engineLabel,
 		"sub64":       func(a, b int64) int64 { return a - b },
 		"duration":    humanDuration,
 		// backupStatus maps a backup's status onto the job status styles.

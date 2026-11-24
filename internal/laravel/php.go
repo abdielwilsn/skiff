@@ -44,7 +44,7 @@ func withPHP(php, script string) string {
 
 const ensurePHPTemplate = pkgsInstalledFn + `
 PHP="{{PHP}}"
-PHP_PKGS="php${PHP}-fpm php${PHP}-cli php${PHP}-mbstring php${PHP}-xml php${PHP}-curl php${PHP}-zip php${PHP}-bcmath php${PHP}-intl php${PHP}-sqlite3 php${PHP}-mysql php${PHP}-gd"
+PHP_PKGS="php${PHP}-fpm php${PHP}-cli php${PHP}-mbstring php${PHP}-xml php${PHP}-curl php${PHP}-zip php${PHP}-bcmath php${PHP}-intl php${PHP}-sqlite3 php${PHP}-mysql php${PHP}-pgsql php${PHP}-gd"
 if pkgs_installed $PHP_PKGS; then
     echo "PHP ${PHP} is installed"
 else

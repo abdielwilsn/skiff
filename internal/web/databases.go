@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -12,26 +13,92 @@ import (
 	"skiff/internal/store"
 )
 
-const keyMySQLInstalled = "mysql_installed"
+const (
+	keyMySQLInstalled    = "mysql_installed"
+	keyPostgresInstalled = "postgres_installed"
+	keyRedisInstalled    = "redis_installed"
+	keyRedisPassword     = "redis_password"
+)
 
 func (s *Server) mysqlInstalled() bool {
 	v, _ := s.st.Setting(keyMySQLInstalled)
 	return v == "1" || s.cfg.DryRun
 }
 
+func (s *Server) postgresInstalled() bool {
+	v, _ := s.st.Setting(keyPostgresInstalled)
+	return v == "1" || s.cfg.DryRun
+}
+
+// engineInstalled reports whether a database engine is installed.
+func (s *Server) engineInstalled(engine string) bool {
+	switch engine {
+	case store.EngineMySQL:
+		return s.mysqlInstalled()
+	case store.EnginePostgres:
+		return s.postgresInstalled()
+	}
+	return false
+}
+
+// engines lists the installed database engines, MySQL first.
+func (s *Server) engines() []string {
+	var out []string
+	for _, e := range []string{store.EngineMySQL, store.EnginePostgres} {
+		if s.engineInstalled(e) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func engineLabel(e string) string { return store.Database{Engine: e}.EngineLabel() }
+
+// redisPassword is the server's Redis password, or "" if Redis isn't installed.
+func (s *Server) redisPassword() string {
+	if v, _ := s.st.Setting(keyRedisInstalled); v != "1" && !s.cfg.DryRun {
+		return ""
+	}
+	pw, _ := s.st.Setting(keyRedisPassword)
+	return pw
+}
+
+// service is a server-wide service on the Databases page.
+type service struct {
+	ID, Name, Blurb string
+	Installed       bool
+	Job             *store.Job // latest install job
+}
+
 type databasesData struct {
-	Installed   bool
+	Services    []service
+	Installed   bool // any database engine
+	Engines     []string
 	Provisioned bool
-	InstallJob  *store.Job
 	Databases   []store.Database
 	AttachTo    []store.Site // deployed sites without a database
-	SuggestName string
+	Redis       bool
+	RedisPass   string
+	RedisSites  []store.Site
 }
 
 func (s *Server) databasesPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
-	d := databasesData{Installed: s.mysqlInstalled(), Provisioned: s.provisioned()}
-	if j, err := s.st.LatestJob("mysql-install"); err == nil {
-		d.InstallJob = &j
+	d := databasesData{Provisioned: s.provisioned(), Engines: s.engines()}
+	d.Installed = len(d.Engines) > 0
+	d.RedisPass = s.redisPassword()
+	d.Redis = d.RedisPass != ""
+	for _, sv := range []service{
+		{ID: "mysql", Name: "MySQL", Installed: s.mysqlInstalled(),
+			Blurb: "MySQL 8 on 127.0.0.1:3306. Tuned to about 150 MB of memory on servers with less than 2 GB."},
+		{ID: "postgres", Name: "PostgreSQL", Installed: s.postgresInstalled(),
+			Blurb: "Ubuntu's PostgreSQL on 127.0.0.1:5432, tuned down on small servers."},
+		{ID: "redis", Name: "Redis", Installed: d.Redis,
+			Blurb: "Cache, sessions and queues on 127.0.0.1:6379, password protected."},
+	} {
+		if j, err := s.st.LatestJob(sv.ID + "-install"); err == nil {
+			sv.Job = &j
+		}
+		d.Services = append(d.Services, sv)
 	}
 	var err error
 	if d.Databases, err = s.st.Databases(); err != nil {
@@ -46,22 +113,53 @@ func (s *Server) databasesPage(w http.ResponseWriter, r *http.Request, sess stor
 	}
 	sites, _ := s.st.Sites()
 	for _, x := range sites {
-		if x.DeployedAt != nil && !hasDB[x.ID] {
+		if x.DeployedAt != nil && !hasDB[x.ID] && !x.IsStatic() {
 			d.AttachTo = append(d.AttachTo, x)
+		}
+		if x.Redis {
+			d.RedisSites = append(d.RedisSites, x)
 		}
 	}
 	s.render(w, r, "databases", http.StatusOK, pageFor(sess, "Databases", "databases", d))
 }
 
-func (s *Server) installMySQL(w http.ResponseWriter, r *http.Request, _ store.Session) {
-	if j, err := s.st.LatestJob("mysql-install"); err == nil && !j.Done() {
+// installService installs MySQL, PostgreSQL or Redis.
+func (s *Server) installService(w http.ResponseWriter, r *http.Request, _ store.Session) {
+	which := r.PathValue("service")
+	kind := which + "-install"
+	if j, err := s.st.LatestJob(kind); err == nil && !j.Done() {
 		redirect(w, r, "/jobs/"+strconv.FormatInt(j.ID, 10))
 		return
 	}
-	id, err := s.runner.Enqueue(nil, "mysql-install", "Install MySQL", s.deployer.InstallMySQL,
+	var (
+		title string
+		fn    func(ctx context.Context, log io.Writer) error
+		key   string
+	)
+	switch which {
+	case "mysql":
+		title, fn, key = "Install MySQL", s.deployer.InstallMySQL, keyMySQLInstalled
+	case "postgres":
+		title, fn, key = "Install PostgreSQL", s.deployer.InstallPostgres, keyPostgresInstalled
+	case "redis":
+		pw, _ := s.st.Setting(keyRedisPassword)
+		if pw == "" {
+			pw = laravel.NewPassword()
+			if err := s.st.SetSetting(keyRedisPassword, pw); err != nil {
+				s.serverError(w, err)
+				return
+			}
+		}
+		title, key = "Install Redis", keyRedisInstalled
+		fn = func(ctx context.Context, log io.Writer) error { return s.deployer.InstallRedis(ctx, log, pw) }
+	default:
+		http.NotFound(w, r)
+		return
+	}
+	id, err := s.runner.Enqueue(nil, kind, title, fn,
 		func(err error) {
 			if err == nil {
-				_ = s.st.SetSetting(keyMySQLInstalled, "1")
+				_ = s.st.SetSetting(key, "1")
 			}
 		})
 	if err != nil {
@@ -73,23 +171,27 @@ func (s *Server) installMySQL(w http.ResponseWriter, r *http.Request, _ store.Se
 
 func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request, _ store.Session) {
 	name := strings.ToLower(strings.TrimSpace(r.FormValue("name")))
+	engine := r.FormValue("engine")
+	if engine == "" {
+		engine = store.EngineMySQL
+	}
 	fail := func(msg string) {
 		setFlash(w, "err", msg)
 		redirect(w, r, "/databases")
 	}
-	if !s.mysqlInstalled() {
-		fail("Install MySQL first.")
+	if !s.engineInstalled(engine) {
+		fail("Install " + engineLabel(engine) + " first.")
 		return
 	}
 	if !laravel.ValidDBName(name) {
-		fail("Use 1–32 lowercase letters, digits or underscores, starting with a letter (and not a reserved name like mysql).")
+		fail("Use 1–32 lowercase letters, digits or underscores, starting with a letter (and not a reserved name like mysql, postgres or pg_…).")
 		return
 	}
 	if taken, _ := s.st.NameTaken(name); taken {
 		fail("A database or user called " + name + " already exists.")
 		return
 	}
-	db := store.Database{Name: name, Username: name, Password: laravel.NewPassword(), Status: store.DBPending}
+	db := store.Database{Engine: engine, Name: name, Username: name, Password: laravel.NewPassword(), Status: store.DBPending}
 	id, err := s.st.CreateDatabase(db)
 	if errors.Is(err, store.ErrDuplicate) {
 		fail("A database or user called " + name + " already exists.")
@@ -110,7 +212,7 @@ func (s *Server) createDatabase(w http.ResponseWriter, r *http.Request, _ store.
 
 func (s *Server) enqueueCreateDatabase(db store.Database) (int64, error) {
 	spec := laravel.SpecOf(db)
-	return s.runner.Enqueue(nil, "db-create", "Create database "+db.Name,
+	return s.runner.Enqueue(nil, "db-create", "Create "+db.EngineLabel()+" database "+db.Name,
 		func(ctx context.Context, log io.Writer) error { return s.deployer.CreateDatabase(ctx, log, spec) },
 		func(err error) {
 			status := store.DBReady
@@ -190,6 +292,10 @@ func (s *Server) attachDatabase(w http.ResponseWriter, r *http.Request, _ store.
 		fail("Deploy " + site.Domain + " first.")
 		return
 	}
+	if site.IsStatic() {
+		fail(site.Domain + " is a static site; it can't use a database.")
+		return
+	}
 	if _, err := s.st.DatabaseForSite(siteID); err == nil {
 		fail(site.Domain + " already has a database.")
 		return
@@ -203,6 +309,10 @@ func (s *Server) attachDatabase(w http.ResponseWriter, r *http.Request, _ store.
 		func(ctx context.Context, log io.Writer) error {
 			if err := s.deployer.WriteDatabaseEnv(ctx, log, site, spec); err != nil {
 				return err
+			}
+			if site.HasApp() {
+				fmt.Fprintln(log, "Restarting the app so it reads DATABASE_URL. Run your migrations from the Commands page.")
+				return s.deployer.StartApp(ctx, log, site)
 			}
 			return s.deployer.Migrate(ctx, log, site)
 		},
@@ -248,7 +358,7 @@ func (s *Server) deleteDatabase(w http.ResponseWriter, r *http.Request, _ store.
 	}
 	_ = s.st.SetDatabaseStatus(db.ID, store.DBDeleting)
 	spec := laravel.SpecOf(db)
-	id, err := s.runner.Enqueue(nil, "db-delete", "Delete database "+db.Name,
+	id, err := s.runner.Enqueue(nil, "db-delete", "Delete "+db.EngineLabel()+" database "+db.Name,
 		func(ctx context.Context, log io.Writer) error { return s.deployer.DropDatabase(ctx, log, spec) },
 		func(err error) {
 			if err != nil {

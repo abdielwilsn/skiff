@@ -112,9 +112,10 @@ from the menu at the top of the site's sidebar.
   address, and URLs, allowed hosts and cookie domains that name production's
   domain get the new one. Database, cache and mail settings are copied as they
   are. Untick the box to start from `.env.example` instead.
-- **Database**: a Laravel site whose MySQL database Skiff manages gets a
+- **Database**: a site whose MySQL or PostgreSQL database Skiff manages gets a
   separate database for each environment, so staging's migrations and test
-  data never touch production's. SQLite files are per environment anyway. If
+  data never touch production's. A site using Redis shares the server's Redis
+  with a key prefix of the environment's own. SQLite files are per environment anyway. If
   production's `.env` points at a database server Skiff doesn't manage, change
   the copy on the environment's **Env variables** page.
 - **Promote to production** deploys the exact commit an environment runs to
@@ -241,35 +242,60 @@ whose deploy script is still an untouched older default are upgraded to the new
 one automatically when Skiff starts; edited scripts are left alone (add the
 block above yourself).
 
-## MySQL databases
+## Databases: MySQL, PostgreSQL and Redis
 
-MySQL isn't part of provisioning. **Databases → Install MySQL** adds it only
-when you need it:
+None of them is part of provisioning. The **Databases** page installs each one
+only when you need it, listening on `127.0.0.1` only:
 
-- MySQL 8 from Ubuntu's packages, listening on `127.0.0.1` only (the X
-  Protocol port 33060 is turned off).
-- On servers with < 2 GB RAM, Skiff writes `/etc/mysql/mysql.conf.d/zz-skiff.cnf`
-  to shrink it (no `performance_schema`, 64–128 MB InnoDB buffer pool, 50
-  connections).
-- Skiff administers MySQL as root over the unix socket (Ubuntu's default
-  `auth_socket`), so no root password exists or is stored.
+- **MySQL 8** from Ubuntu's packages (the X Protocol port 33060 is off). On
+  servers with < 2 GB RAM, `/etc/mysql/mysql.conf.d/zz-skiff.cnf` shrinks it
+  (no `performance_schema`, 64–128 MB InnoDB buffer pool, 50 connections).
+  Skiff administers it as root over the unix socket (`auth_socket`).
+- **PostgreSQL** from Ubuntu's packages (16 on Ubuntu 24.04). On small servers
+  `conf.d/zz-skiff.conf` lowers `shared_buffers` (64–128 MB) and
+  `max_connections` (50). Skiff administers it as the `postgres` system user
+  (peer authentication). Each database is owned by its own login role and
+  other roles can't connect to it. PHP's `pgsql` extension is installed with
+  every PHP version.
+- **Redis** from Ubuntu's packages, with a password Skiff generates
+  (`/etc/redis/skiff.conf`, shown on the Databases page).
 
-**New site → "Create a MySQL database"** (ticked by default once MySQL is
-installed) creates a database and a same-named user with a random password, and
-writes `DB_CONNECTION=mysql`, `DB_HOST`, `DB_DATABASE`, `DB_USERNAME`,
-`DB_PASSWORD` into `.env` on the first deploy, before the deploy script runs
-migrations.
+No superuser password exists or is stored for MySQL or PostgreSQL.
+
+**New site → Database** creates a MySQL or PostgreSQL database and a
+same-named user with a random password, and writes its settings into `.env` on
+the first deploy, before the deploy script runs migrations:
+
+- Laravel: `DB_CONNECTION` (`mysql` or `pgsql`), `DB_HOST`, `DB_PORT`,
+  `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`.
+- Django, FastAPI, Flask, Node apps: `DATABASE_URL`
+  (`postgres://user:password@127.0.0.1:5432/name` or `mysql://…:3306/…`), which
+  dj-database-url, Prisma, Drizzle, SQLAlchemy and most libraries read. Your
+  app still needs its driver (e.g. `psycopg` for Django, `pg` for Node).
+
+**Redis** for a site, either ticked when creating it or with **Use Redis** on
+its Overview:
+
+- Laravel: `REDIS_HOST`, `REDIS_PORT`, `REDIS_PASSWORD`, and a `REDIS_PREFIX`
+  of the site's own (e.g. `app_example_com_`), so sites and their staging
+  environments sharing the server's Redis never see each other's keys.
+  Optionally `CACHE_STORE`, `SESSION_DRIVER` and `QUEUE_CONNECTION` switch to
+  `redis` (on by default). Skiff installs the `phpredis` extension.
+- Other apps: `REDIS_URL=redis://default:password@127.0.0.1:6379/0`.
+- The site's app or workers restart so they pick it up.
 
 On the **Databases** page you can also create standalone databases, attach one
-to an already-deployed site (its `.env` is updated and migrations run), reveal
-passwords, and delete databases (type the name to confirm).
+to an already-deployed site (its `.env` is updated; Laravel migrations run,
+other apps restart), reveal passwords, and delete databases (type the name to
+confirm).
 
 - Each user only has access to its own database.
-- Passwords reach MySQL over stdin and `.env` through an environment variable,
-  so they never appear in job logs or process lists. They're stored in Skiff's
-  root-only SQLite file so the panel can show them to you.
+- Passwords reach the database over stdin and `.env` through an environment
+  variable, so they never appear in job logs or process lists. They're stored
+  in Skiff's root-only SQLite file so the panel can show them to you.
 - Deleting a site keeps its database (and data) and just detaches it.
-- To browse a database from your computer, use an SSH tunnel to port 3306.
+- To browse a database from your computer, use an SSH tunnel to port 3306 or
+  5432.
 
 ## Backups
 
@@ -278,7 +304,8 @@ time by default) and **before every deploy** of a Laravel or Python site, so a
 bad migration can be undone:
 
 - MySQL databases with `mysqldump --single-transaction` (a consistent snapshot
-  without locking the app), and the SQLite databases of deployed sites
+  without locking the app), PostgreSQL databases with `pg_dump` (plain SQL
+  without ownership, restored as the database's own user), and the SQLite databases of deployed sites
   (`database/database.sqlite`, Django's `db.sqlite3`) with SQLite's `.backup`.
 - Files are gzipped into `/var/backups/skiff/<database>/`, readable by root only.
   The newest 7 nightly/manual backups are kept per database (configurable), plus
@@ -290,9 +317,11 @@ bad migration can be undone:
   process lists. Saving the settings tests the connection.
 - **Restore** puts a database back to a backup. Skiff first takes a safety
   backup of the current data, downloads the file from the bucket if the local
-  copy is gone, then replaces the database (MySQL: dropped and recreated;
+  copy is gone, then replaces the database (MySQL and PostgreSQL: dropped and recreated;
   SQLite: an atomic file swap) and restarts the site's app or workers.
 - **Download** any backup from the panel.
+- Redis isn't backed up: it holds caches, sessions and queued jobs, which are
+  meant to be short-lived.
 
 If a backup before a deploy fails, the deploy stops (nothing changes); turn off
 "Back up before each deploy" to deploy anyway.
@@ -301,7 +330,7 @@ If a backup before a deploy fails, the deploy stops (nothing changes); turn off
 
 **Server** shows CPU, memory, disk and swap use, load, uptime, a 24-hour chart
 of each (sampled once a minute, kept in memory), and whether Nginx, PHP-FPM,
-MySQL and every site process (app servers, queue workers, schedulers) are
+MySQL, PostgreSQL, Redis and every site process (app servers, queue workers, schedulers) are
 running. The dashboard shows the same numbers in a strip and warns when the
 disk is over 85% full, memory is over 90% used, or a service has failed.
 
@@ -404,7 +433,8 @@ cmd/skiff            CLI entry point (serve, reset-admin, version)
 internal/executor    Executor interface: Local runs bash on this box; DryRun prints.
                      A future SSH/agent executor lets one panel manage many servers.
 internal/laravel     Provisioning, Nginx templates, deploy pipeline, PHP/Node/Python runtimes,
-                     HTTPS (certbot), panel reverse proxy, MySQL, backups, server health
+                     HTTPS (certbot), panel reverse proxy, MySQL, PostgreSQL, Redis,
+                     backups, server health
 internal/github      OAuth flow, repo listing, token-in-env git auth
 internal/jobs        Sequential background job runner with file logs
 internal/store       SQLite schema and queries

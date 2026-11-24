@@ -160,8 +160,11 @@ type newSiteData struct {
 	Repos                       []github.Repo
 	Connected, Provisioned      bool
 	Host                        string
-	MySQL                       bool // MySQL is installed, so offer a database
-	CreateDB                    bool
+	Engines                     []string // installed database engines
+	Engine                      string   // database to create: "mysql", "postgres" or ""
+	EngineSet                   bool     // the form was submitted, so Engine "" means none
+	Redis                       bool     // Redis is installed
+	UseRedis                    bool
 	PHP                         string
 	PHPVersions                 []string
 	Node                        string
@@ -177,7 +180,11 @@ type newSiteData struct {
 func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 	d.Connected = s.githubToken() != ""
 	d.Provisioned = s.provisioned()
-	d.MySQL = s.mysqlInstalled()
+	d.Engines = s.engines()
+	if !d.EngineSet && len(d.Engines) > 0 {
+		d.Engine = d.Engines[0]
+	}
+	d.Redis = s.redisPassword() != ""
 	d.PHPVersions = laravel.PHPVersions
 	if d.PHP == "" {
 		d.PHP = laravel.DefaultPHP
@@ -207,20 +214,22 @@ func (s *Server) newSiteForm(r *http.Request, d newSiteData) newSiteData {
 
 func (s *Server) newSitePage(w http.ResponseWriter, r *http.Request, sess store.Session) {
 	q := r.URL.Query()
-	d := s.newSiteForm(r, newSiteData{Repo: q.Get("repo"), Branch: q.Get("branch"), CreateDB: true})
+	d := s.newSiteForm(r, newSiteData{Repo: q.Get("repo"), Branch: q.Get("branch")})
 	s.render(w, r, "site_new", http.StatusOK, pageFor(sess, "New site", "sites", d))
 }
 
 func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.Session) {
 	d := newSiteData{
-		Repo:     normalizeRepo(r.FormValue("repo")),
-		Branch:   strings.TrimSpace(r.FormValue("branch")),
-		Domain:   strings.ToLower(strings.TrimSpace(r.FormValue("domain"))),
-		CreateDB: r.FormValue("mysql") == "1",
-		PHP:      r.FormValue("php"),
-		Node:     r.FormValue("node"),
-		NodeSet:  true,
-		Python:   r.FormValue("python"),
+		Repo:      normalizeRepo(r.FormValue("repo")),
+		Branch:    strings.TrimSpace(r.FormValue("branch")),
+		Domain:    strings.ToLower(strings.TrimSpace(r.FormValue("domain"))),
+		Engine:    r.FormValue("database"),
+		EngineSet: true,
+		UseRedis:  r.FormValue("redis") == "1",
+		PHP:       r.FormValue("php"),
+		Node:      r.FormValue("node"),
+		NodeSet:   true,
+		Python:    r.FormValue("python"),
 
 		Framework:    r.FormValue("framework"),
 		StartCommand: strings.TrimSpace(r.FormValue("start_command")),
@@ -228,6 +237,9 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 	}
 	if d.Branch == "" {
 		d.Branch = "main"
+	}
+	if r.FormValue("mysql") == "1" && d.Engine == "" { // the form before PostgreSQL
+		d.Engine = store.EngineMySQL
 	}
 	fw := laravel.FrameworkByID(d.Framework)
 	d.Framework = fw.ID
@@ -266,12 +278,19 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 		d.Error = "Enter the command that starts your app, e.g. npm run start."
 	case fw.Kind == store.KindStatic && !laravel.ValidOutputDir(d.OutputDir):
 		d.Error = "Enter the folder your build writes to, e.g. dist (or . for the repository root)."
+	case d.Engine != "" && fw.Kind != store.KindStatic && !s.engineInstalled(d.Engine):
+		d.Error = "Install " + engineLabel(d.Engine) + " on the Databases page first, or choose another database."
+	case d.UseRedis && fw.Kind != store.KindStatic && s.redisPassword() == "":
+		d.Error = "Install Redis on the Databases page first."
+	}
+	if fw.Kind == store.KindStatic {
+		d.Engine, d.UseRedis = "", false
 	}
 	if d.Error == "" {
 		site := store.Site{
 			Domain: d.Domain, Repo: d.Repo, Branch: d.Branch,
 			PHPVersion: d.PHP, NodeVersion: d.Node, DeployScript: fw.DeployScript(),
-			Kind: fw.Kind, PythonVersion: d.Python,
+			Kind: fw.Kind, PythonVersion: d.Python, Redis: d.UseRedis,
 		}
 		switch fw.Kind {
 		case store.KindNode, store.KindPython:
@@ -288,11 +307,15 @@ func (s *Server) createSite(w http.ResponseWriter, r *http.Request, sess store.S
 			return
 		default:
 			site.ID = id
-			if d.CreateDB && s.mysqlInstalled() && fw.Kind == store.KindLaravel {
-				if _, err := s.newDatabaseRecord(laravel.DBNameFor(site.Domain), &id); err != nil {
+			if d.Engine != "" {
+				if _, err := s.newDatabaseRecord(d.Engine, laravel.DBNameFor(site.Domain), &id); err != nil {
 					s.serverError(w, err)
 					return
 				}
+			}
+			if d.UseRedis {
+				_ = s.st.SetSiteRedis(id, true)
+				site.Redis = true
 			}
 			jobID, err := s.startDeploy(site, "")
 			if err != nil {
@@ -344,7 +367,12 @@ func (s *Server) startDeployCommit(site store.Site, reason, commit string) (int6
 			if err := s.backupBeforeDeploy(ctx, log, cur); err != nil {
 				return err
 			}
-			return s.deployer.DeployCommit(ctx, log, cur, s.githubToken(), spec, commit)
+			opt := laravel.DeployOptions{DB: spec, Commit: commit}
+			// A site created with Redis is connected on its first deploy.
+			if cur.Redis && cur.DeployedAt == nil {
+				opt.RedisPassword = s.redisPassword()
+			}
+			return s.deployer.DeployWith(ctx, log, cur, s.githubToken(), opt)
 		},
 		func(err error) {
 			if err != nil {
@@ -360,7 +388,7 @@ func (s *Server) startDeployCommit(site store.Site, reason, commit string) (int6
 
 // newDatabaseRecord reserves a unique database name based on base and records
 // it (status pending, optionally attached to a site).
-func (s *Server) newDatabaseRecord(base string, siteID *int64) (store.Database, error) {
+func (s *Server) newDatabaseRecord(engine, base string, siteID *int64) (store.Database, error) {
 	name := base
 	for i := 2; ; i++ {
 		taken, err := s.st.NameTaken(name)
@@ -372,7 +400,7 @@ func (s *Server) newDatabaseRecord(base string, siteID *int64) (store.Database, 
 		}
 		name = fmt.Sprintf("%s_%d", base, i)
 	}
-	db := store.Database{Name: name, Username: name, Password: laravel.NewPassword(), Status: store.DBPending, SiteID: siteID}
+	db := store.Database{Engine: engine, Name: name, Username: name, Password: laravel.NewPassword(), Status: store.DBPending, SiteID: siteID}
 	id, err := s.st.CreateDatabase(db)
 	db.ID = id
 	return db, err
@@ -412,6 +440,8 @@ type siteData struct {
 	PHPVersions    []string
 	NodeVersions   []string
 	PythonVersions []string
+	RedisReady     bool   // Redis is installed on the server
+	RedisPrefix    string // the key prefix a Laravel site gets
 
 	HookBase        string // public HTTPS origin for webhooks; "" = not available
 	GitHubConnected bool
@@ -438,6 +468,8 @@ func (s *Server) sitePage(w http.ResponseWriter, r *http.Request, sess store.Ses
 	d.NodeVersions = laravel.NodeVersions
 	d.PythonVersions = laravel.PythonVersions
 	d.MaxWorkers = laravel.MaxWorkers
+	d.RedisReady = s.redisPassword() != ""
+	d.RedisPrefix = laravel.RedisPrefix(site.Domain)
 	if site.DeployedAt != nil && !s.cfg.DryRun && (site.HasApp() || site.WorkerCount > 0 || site.Scheduler) {
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		d.Process, _ = s.deployer.Status(ctx, site)

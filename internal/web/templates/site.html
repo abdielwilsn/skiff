@@ -82,9 +82,23 @@
         <dt>App</dt>
         <dd>{{if $s.DeployedAt}}{{if eq $d.Process.App "active"}}<span class="status tone-ok"><i></i>Running on port {{$s.Port}}</span>{{else if $d.Process.App}}<span class="status tone-err"><i></i>{{$d.Process.App}}</span>{{else}}<span class="muted">Port {{$s.Port}}</span>{{end}}{{else}}<span class="muted">Starts after the first deploy (port {{$s.Port}})</span>{{end}}</dd>
         {{end}}
-        {{if $s.IsLaravel}}
+        {{if not $s.IsStatic}}
         <dt>Database</dt>
-        <dd>{{with $d.Database}}<span class="row">{{template "i-db"}}<a class="link" href="/databases">MySQL · {{.Name}}</a>{{if ne .Status "ready"}}{{template "status" .Status}}{{end}}</span>{{else}}<span class="muted">SQLite or set in .env</span>{{end}}</dd>
+        <dd>{{with $d.Database}}<span class="row">{{template "i-db"}}<a class="link" href="/databases">{{.EngineLabel}} · {{.Name}}</a>{{if ne .Status "ready"}}{{template "status" .Status}}{{end}}</span>{{else}}<span class="muted">{{if $s.IsLaravel}}SQLite or set in .env{{else}}None, or set in .env{{end}}</span>{{end}}</dd>
+        <dt>Redis</dt>
+        <dd>
+          {{if $s.Redis}}<span class="row">{{template "i-zap"}} Connected{{if $s.IsLaravel}} <span class="subtle">· prefix <code>{{$d.RedisPrefix}}</code></span>{{end}}</span>
+          {{else if not $d.RedisReady}}<a class="link" href="/databases">Install Redis</a>
+          {{else if not $s.DeployedAt}}<span class="muted">Deploy first</span>
+          {{else}}
+          <form method="post" action="/sites/{{$s.ID}}/redis" class="inline-form"
+                data-confirm="Point {{$s.Domain}}'s .env at this server's Redis{{if $s.IsLaravel}} (REDIS_* keys, prefix {{$d.RedisPrefix}}){{else}} (REDIS_URL){{end}} and restart its processes?">
+            <input type="hidden" name="csrf" value="{{$csrf}}">
+            {{if $s.IsLaravel}}<label class="check-sm"><input type="checkbox" name="drivers" value="1" checked><span>Cache, sessions &amp; queue</span></label>{{end}}
+            <button class="btn small">Use Redis</button>
+          </form>
+          {{end}}
+        </dd>
         {{end}}
         <dt>Directory</dt>
         <dd><code>{{$d.Path}}</code></dd>

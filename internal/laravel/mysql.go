@@ -19,13 +19,24 @@ import (
 
 // DBSpec is what Skiff needs to create or connect to a database.
 type DBSpec struct {
+	Engine   string // store.EngineMySQL (default) or store.EnginePostgres
 	Name     string
 	User     string
 	Password string
 }
 
 func SpecOf(d store.Database) DBSpec {
-	return DBSpec{Name: d.Name, User: d.Username, Password: d.Password}
+	return DBSpec{Engine: d.Engine, Name: d.Name, User: d.Username, Password: d.Password}
+}
+
+func (spec DBSpec) postgres() bool { return spec.Engine == store.EnginePostgres }
+
+// label is the engine's display name.
+func (spec DBSpec) label() string {
+	if spec.postgres() {
+		return "PostgreSQL"
+	}
+	return "MySQL"
 }
 
 // dbNameRe keeps names safe to splice into SQL identifiers and shell scripts.
@@ -35,10 +46,14 @@ var dbNameRe = regexp.MustCompile(`^[a-z][a-z0-9_]{0,31}$`)
 var reservedDBNames = map[string]bool{
 	"mysql": true, "sys": true, "information_schema": true, "performance_schema": true,
 	"root": true, "debian_sys_maint": true, "mysql_sys": true, "skiff": true,
+	"postgres": true, "template0": true, "template1": true, "public": true,
 }
 
-// ValidDBName reports whether name can be used for a database and its user.
-func ValidDBName(name string) bool { return dbNameRe.MatchString(name) && !reservedDBNames[name] }
+// ValidDBName reports whether name can be used for a database and its user,
+// in MySQL and PostgreSQL (where "pg_" role names are reserved).
+func ValidDBName(name string) bool {
+	return dbNameRe.MatchString(name) && !reservedDBNames[name] && !strings.HasPrefix(name, "pg_")
+}
 
 // DBNameFor turns a domain into a database name: "app.example.com" -> "app_example_com".
 func DBNameFor(domain string) string {
@@ -59,6 +74,9 @@ func DBNameFor(domain string) string {
 	}
 	if reservedDBNames[name] {
 		name += "_db"
+	}
+	if strings.HasPrefix(name, "pg_") {
+		name = strings.TrimRight(("db_" + name)[:min(len(name)+3, 28)], "_")
 	}
 	return name
 }
@@ -151,6 +169,9 @@ func (d *Deployer) CreateDatabase(ctx context.Context, w io.Writer, spec DBSpec)
 	if err := spec.valid(); err != nil {
 		return err
 	}
+	if spec.postgres() {
+		return d.createPostgres(ctx, w, spec)
+	}
 	var sql strings.Builder
 	fmt.Fprintf(&sql, "CREATE DATABASE IF NOT EXISTS `%s` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;\n", spec.Name)
 	for _, h := range mysqlHosts {
@@ -176,6 +197,9 @@ func (d *Deployer) DropDatabase(ctx context.Context, w io.Writer, spec DBSpec) e
 	if !ValidDBName(spec.Name) || !ValidDBName(spec.User) {
 		return fmt.Errorf("invalid database name")
 	}
+	if spec.postgres() {
+		return d.dropPostgres(ctx, w, spec)
+	}
 	var sql strings.Builder
 	fmt.Fprintf(&sql, "DROP DATABASE IF EXISTS `%s`;\n", spec.Name)
 	for _, h := range mysqlHosts {
@@ -188,34 +212,53 @@ func (d *Deployer) DropDatabase(ctx context.Context, w io.Writer, spec DBSpec) e
 	return nil
 }
 
-// WriteDatabaseEnv points the site's .env at the database, uncommenting or
-// appending DB_* keys as needed, and refreshes Laravel's config cache.
-func (d *Deployer) WriteDatabaseEnv(ctx context.Context, w io.Writer, site store.Site, spec DBSpec) error {
-	if err := spec.valid(); err != nil {
-		return err
-	}
-	step(w, "Pointing %s's .env at MySQL database %s", site.Domain, spec.Name)
-	script := locate(site.Domain) + fmt.Sprintf(`set_env() {
+// setEnvFn defines set_env KEY VALUE, which sets a key in "$ENVF",
+// uncommenting it or appending it as needed.
+const setEnvFn = `set_env() {
     if grep -qE "^$1=" "$ENVF"; then
         sed -i "s|^$1=.*|$1=$2|" "$ENVF"
     elif grep -qE "^# *$1=" "$ENVF"; then
         sed -i "s|^# *$1=.*|$1=$2|" "$ENVF"
     else
-        printf '%%s=%%s\n' "$1" "$2" >> "$ENVF"
+        printf '%s=%s\n' "$1" "$2" >> "$ENVF"
     fi
 }
 mkdir -p "$(dirname "$ENVF")"
 touch "$ENVF"
 chmod 640 "$ENVF"
-set_env DB_CONNECTION mysql
+`
+
+// configCache refreshes a Laravel app's config cache if it uses one.
+const configCache = `if [ -f "$APP/bootstrap/cache/config.php" ]; then cd "$APP" && php artisan config:cache; fi`
+
+// WriteDatabaseEnv points the site's .env at the database: Laravel's DB_*
+// keys, or DATABASE_URL for other apps (Django with dj-database-url, Prisma,
+// Drizzle, Rails-style libraries…). It refreshes Laravel's config cache.
+func (d *Deployer) WriteDatabaseEnv(ctx context.Context, w io.Writer, site store.Site, spec DBSpec) error {
+	if err := spec.valid(); err != nil {
+		return err
+	}
+	conn, port, scheme := "mysql", "3306", "mysql"
+	if spec.postgres() {
+		conn, port, scheme = "pgsql", "5432", "postgres"
+	}
+	step(w, "Pointing %s's .env at %s database %s", site.Domain, spec.label(), spec.Name)
+	var keys string
+	if site.IsLaravel() {
+		keys = fmt.Sprintf(`set_env DB_CONNECTION %[1]s
 set_env DB_HOST 127.0.0.1
-set_env DB_PORT 3306
-set_env DB_DATABASE %s
-set_env DB_USERNAME %s
+set_env DB_PORT %[2]s
+set_env DB_DATABASE %[3]s
+set_env DB_USERNAME %[4]s
 set_env DB_PASSWORD "$SKIFF_DB_PASSWORD"
-echo "DB_CONNECTION=mysql, DB_DATABASE=%s, DB_USERNAME=%s"
-if [ -f "$APP/bootstrap/cache/config.php" ]; then cd "$APP" && php artisan config:cache; fi`,
-		spec.Name, spec.User, spec.Name, spec.User)
+echo "DB_CONNECTION=%[1]s, DB_DATABASE=%[3]s, DB_USERNAME=%[4]s"
+`, conn, port, spec.Name, spec.User)
+	} else {
+		keys = fmt.Sprintf(`set_env DATABASE_URL "%[1]s://%[3]s:$SKIFF_DB_PASSWORD@127.0.0.1:%[2]s/%[4]s"
+echo "DATABASE_URL=%[1]s://%[3]s:…@127.0.0.1:%[2]s/%[4]s"
+`, scheme, port, spec.User, spec.Name)
+	}
+	script := locate(site.Domain) + setEnvFn + keys + configCache
 	// The password is passed in the environment, not the script, so it isn't logged.
 	opt := executor.Options{User: SiteUser, Env: []string{"SKIFF_DB_PASSWORD=" + spec.Password}}
 	if err := d.run(ctx, w, withPHP(site.PHPVersion, script), opt); err != nil {

@@ -79,6 +79,8 @@ var migrations = []string{
 	`CREATE INDEX backups_source ON backups(source, created_at)`,
 	`ALTER TABLE sites ADD COLUMN environment TEXT NOT NULL DEFAULT 'production'`,
 	`ALTER TABLE sites ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE databases ADD COLUMN engine TEXT NOT NULL DEFAULT 'mysql'`,
+	`ALTER TABLE sites ADD COLUMN redis INTEGER NOT NULL DEFAULT 0`,
 }
 
 const schemaV1 = `
@@ -347,6 +349,8 @@ type Site struct {
 	Environment string // "production", "staging", …
 	ParentID    int64  // the production site; 0 for a production site
 
+	Redis bool // the site's .env points at the server's Redis
+
 	CreatedAt  time.Time
 	DeployedAt *time.Time
 }
@@ -410,7 +414,7 @@ func (x Site) Scheme() string {
 	return "http"
 }
 
-const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, python_version, environment, parent_id, created_at, deployed_at`
+const siteCols = `id, domain, repo, branch, php_version, node_version, auto_deploy, hook_secret, hook_id, deploy_script, status, https, kind, start_command, port, output_dir, worker_count, worker_options, scheduler, python_version, environment, parent_id, redis, created_at, deployed_at`
 
 type scanner interface{ Scan(dest ...any) error }
 
@@ -419,7 +423,7 @@ func scanSite(row scanner) (Site, error) {
 	var created int64
 	var deployed sql.NullInt64
 	err := row.Scan(&x.ID, &x.Domain, &x.Repo, &x.Branch, &x.PHPVersion, &x.NodeVersion, &x.AutoDeploy, &x.HookSecret, &x.HookID, &x.DeployScript, &x.Status, &x.HTTPS,
-		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &x.PythonVersion, &x.Environment, &x.ParentID, &created, &deployed)
+		&x.Kind, &x.StartCommand, &x.Port, &x.OutputDir, &x.WorkerCount, &x.WorkerOptions, &x.Scheduler, &x.PythonVersion, &x.Environment, &x.ParentID, &x.Redis, &created, &deployed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return x, ErrNotFound
 	}
@@ -524,6 +528,12 @@ func (s *Store) ChildCount(id int64) (int, error) {
 	return n, err
 }
 
+// SetSiteRedis records whether a site uses the server's Redis.
+func (s *Store) SetSiteRedis(id int64, on bool) error {
+	_, err := s.db.Exec(`UPDATE sites SET redis = ? WHERE id = ?`, on, id)
+	return err
+}
+
 func (s *Store) SetSiteStatus(id int64, status string) error {
 	_, err := s.db.Exec(`UPDATE sites SET status = ? WHERE id = ?`, status, id)
 	return err
@@ -594,15 +604,22 @@ func (s *Store) DeleteSite(id int64) error {
 
 // Database statuses.
 const (
-	DBPending  = "pending" // recorded; created in MySQL by a queued job
+	DBPending  = "pending" // recorded; created on the server by a queued job
 	DBReady    = "ready"
 	DBFailed   = "failed"
 	DBDeleting = "deleting"
 )
 
-// Database is a MySQL database plus the user that owns it.
+// Database engines.
+const (
+	EngineMySQL    = "mysql"
+	EnginePostgres = "postgres"
+)
+
+// Database is a MySQL or PostgreSQL database plus the user that owns it.
 type Database struct {
 	ID         int64
+	Engine     string // EngineMySQL or EnginePostgres
 	Name       string
 	Username   string
 	Password   string
@@ -612,14 +629,24 @@ type Database struct {
 	CreatedAt  time.Time
 }
 
-const dbCols = `d.id, d.name, d.username, d.password, d.status, d.site_id, COALESCE(s.domain, ''), d.created_at`
+// EngineLabel is the engine's display name.
+func (d Database) EngineLabel() string {
+	if d.Engine == EnginePostgres {
+		return "PostgreSQL"
+	}
+	return "MySQL"
+}
+
+func (d Database) IsPostgres() bool { return d.Engine == EnginePostgres }
+
+const dbCols = `d.id, d.engine, d.name, d.username, d.password, d.status, d.site_id, COALESCE(s.domain, ''), d.created_at`
 const dbFrom = ` FROM databases d LEFT JOIN sites s ON s.id = d.site_id`
 
 func scanDatabase(row scanner) (Database, error) {
 	var d Database
 	var site sql.NullInt64
 	var created int64
-	err := row.Scan(&d.ID, &d.Name, &d.Username, &d.Password, &d.Status, &site, &d.SiteDomain, &created)
+	err := row.Scan(&d.ID, &d.Engine, &d.Name, &d.Username, &d.Password, &d.Status, &site, &d.SiteDomain, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return d, ErrNotFound
 	}
@@ -632,8 +659,11 @@ func scanDatabase(row scanner) (Database, error) {
 }
 
 func (s *Store) CreateDatabase(d Database) (int64, error) {
-	res, err := s.db.Exec(`INSERT INTO databases(name, username, password, status, site_id, created_at) VALUES(?,?,?,?,?,?)`,
-		d.Name, d.Username, d.Password, d.Status, d.SiteID, now())
+	if d.Engine == "" {
+		d.Engine = EngineMySQL
+	}
+	res, err := s.db.Exec(`INSERT INTO databases(engine, name, username, password, status, site_id, created_at) VALUES(?,?,?,?,?,?,?)`,
+		d.Engine, d.Name, d.Username, d.Password, d.Status, d.SiteID, now())
 	if isUnique(err) {
 		return 0, ErrDuplicate
 	}

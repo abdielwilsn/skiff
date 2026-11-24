@@ -24,7 +24,7 @@ type Health struct {
 	DiskTotal, DiskUsed  int64 // the root filesystem
 	DiskAvail            int64
 	Uptime               time.Duration
-	Services             []Unit // nginx, PHP-FPM, MySQL
+	Services             []Unit // nginx, PHP-FPM, MySQL, PostgreSQL, Redis
 	SiteUnits            []Unit // skiff-<domain>-* app servers, workers, timers
 }
 
@@ -68,6 +68,8 @@ echo "kernel=$(uname -r)"
 svc() { if systemctl cat "$1" >/dev/null 2>&1; then echo "svc=$1 $(systemctl is-active "$1" 2>/dev/null)"; fi; }
 svc nginx.service
 svc mysql.service
+svc postgresql.service
+svc redis-server.service
 for f in /lib/systemd/system/php*-fpm.service; do [ -e "$f" ] && svc "$(basename "$f")"; done
 # Site processes; the scheduler's oneshot service is idle between timer runs.
 systemctl list-units --all --plain --no-legend 'skiff-*' 2>/dev/null | awk '$1 !~ /-schedule\.service$/ {print "unit=" $1 " " $3}'
