@@ -116,7 +116,7 @@ export DEBIAN_FRONTEND=noninteractive
 if ! pkgs_installed mysql-server; then
     echo "==> Installing MySQL"
     dpkg --configure -a || true   # finish any interrupted install first
-    apt-get update -q
+    apt_update
     apt_install mysql-server
 else
     echo "MySQL is already installed"

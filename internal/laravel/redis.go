@@ -21,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 if ! pkgs_installed redis-server; then
     echo "==> Installing Redis"
     dpkg --configure -a || true
-    apt-get update -q
+    apt_update
     apt_install redis-server
 else
     echo "Redis is already installed"
@@ -116,7 +116,7 @@ func (d *Deployer) EnsurePHPRedis(ctx context.Context, w io.Writer, php string) 
 if "php$PHP" -m 2>/dev/null | grep -qx redis; then echo "PHP $PHP has the Redis extension"; exit 0; fi
 echo "==> Installing the Redis extension for PHP $PHP"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -q
+apt_update
 if apt-cache show "php$PHP-redis" 2>/dev/null | grep -q '^Version:'; then apt_install "php$PHP-redis"; else apt_install php-redis; fi
 service "php$PHP-fpm" reload || service "php$PHP-fpm" restart
 "php$PHP" -m | grep -qx redis && echo "Installed"`, php)

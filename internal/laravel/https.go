@@ -68,7 +68,7 @@ if ! pkgs_installed certbot python3-certbot-nginx; then
     echo "Installing certbot (first time only)"
     export DEBIAN_FRONTEND=noninteractive
     dpkg --configure -a || true   # finish any interrupted install first
-    apt-get update -q
+    apt_update
     apt_install certbot python3-certbot-nginx
 fi
 certbot --version`
@@ -90,6 +90,13 @@ const pkgsInstalledFn = `pkgs_installed() {
 const aptRetries = `if [ -d /etc/apt/apt.conf.d ] && [ ! -f /etc/apt/apt.conf.d/80-skiff-retries ]; then
     echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-skiff-retries
 fi
+# apt_update refreshes package lists. It accepts a repository changing its
+# Label, as ppa:ondrej/php did when it was marked deprecated: apt otherwise
+# refuses to update until someone confirms it by hand. A changed origin,
+# suite or codename still stops it.
+apt_update() {
+    apt-get update -q -o Acquire::AllowReleaseInfoChange::Label=true
+}
 apt_install() {
     local i
     for i in 1 2 3; do

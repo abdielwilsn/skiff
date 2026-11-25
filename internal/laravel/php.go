@@ -51,12 +51,12 @@ else
     echo "==> Installing PHP ${PHP}"
     export DEBIAN_FRONTEND=noninteractive
     dpkg --configure -a || true
-    apt-get update -q
+    apt_update
     if ! apt-cache show "php${PHP}-fpm" >/dev/null 2>&1; then
         echo "PHP ${PHP} isn't in Ubuntu's repositories; adding ppa:ondrej/php"
         apt_install software-properties-common
         add-apt-repository -y ppa:ondrej/php
-        apt-get update -q
+        apt_update
     fi
     apt_install $PHP_PKGS
 fi

@@ -21,7 +21,7 @@ export DEBIAN_FRONTEND=noninteractive
 if ! pkgs_installed postgresql; then
     echo "==> Installing PostgreSQL"
     dpkg --configure -a || true
-    apt-get update -q
+    apt_update
     apt_install postgresql
 else
     echo "PostgreSQL is already installed"

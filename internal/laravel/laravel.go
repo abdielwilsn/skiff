@@ -122,7 +122,7 @@ fi
 
 {{APT_RETRIES}}
 echo "==> Updating package lists"
-apt-get update -q
+apt_update
 
 echo "==> Installing Nginx and base packages"
 apt_install ca-certificates curl git unzip nginx
