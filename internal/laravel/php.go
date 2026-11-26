@@ -10,9 +10,9 @@ import (
 )
 
 // Each site picks a PHP version. A version is installed the first time a site
-// needs it (FPM, CLI and the usual Laravel extensions, from ppa:ondrej/php when
-// Ubuntu doesn't ship it), gets its own "skiff" FPM pool, and a shim directory
-// so "php" and "composer" in that site's scripts run that version.
+// needs it (FPM, CLI and the usual Laravel extensions, from packages.sury.org
+// when Ubuntu doesn't ship it), gets its own "skiff" FPM pool, and a shim
+// directory so "php" and "composer" in that site's scripts run that version.
 
 // DefaultPHP is what provisioning installs and new sites use. Laravel 13's
 // dependencies (Symfony 8) need PHP 8.4.
@@ -42,20 +42,73 @@ func withPHP(php, script string) string {
 	return fmt.Sprintf("export PATH=%s:$PATH\n", phpShimDir(php)) + script
 }
 
-const ensurePHPTemplate = pkgsInstalledFn + `
+// phpRepoFns sets up Ondřej Surý's PHP repository, packages.sury.org/php, which
+// carries every supported PHP version for current Ubuntu releases. It replaced
+// ppa:ondrej/php, which is frozen and has no packages for Ubuntu 26.04;
+// servers set up with the PPA are moved to it (installed packages stay and
+// get their updates from the new repository).
+const phpRepoFns = `sury_configured() {
+    grep -rqs 'packages.sury.org/php' /etc/apt/sources.list /etc/apt/sources.list.d/
+}
+old_ppa_files() {
+    ls /etc/apt/sources.list.d/ondrej-ubuntu-php-* 2>/dev/null | grep -v '\.save$' || true
+}
+# (grep without -q reads all its input: with -q it can exit early, and under
+# pipefail the writer's broken pipe would make a match look like a failure.)
+php_available() {
+    apt-cache show "php$1-fpm" 2>/dev/null | grep '^Version:' >/dev/null
+}
+# add_sury returns non-zero on any failure. (It's called from "if", where
+# set -e doesn't apply, so every step checks for itself.)
+add_sury() {
+    local code tmp
+    code="$(. /etc/os-release && echo "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")"
+    [ -n "$code" ] || { echo "Can't tell which Ubuntu release this is." >&2; return 1; }
+    apt_install ca-certificates curl || return 1
+    if ! curl -fsS -o /dev/null "https://packages.sury.org/php/dists/${code}/InRelease"; then
+        echo "packages.sury.org has no PHP packages for Ubuntu ${code}." >&2
+        return 1
+    fi
+    tmp="$(mktemp -d)" || return 1
+    curl -fsSL -o "$tmp/keyring.deb" https://packages.sury.org/debsuryorg-archive-keyring.deb \
+        && dpkg -i "$tmp/keyring.deb" >/dev/null \
+        && [ -s /usr/share/keyrings/debsuryorg-archive-keyring.gpg ] \
+        || { rm -rf "$tmp"; echo "Couldn't install the packages.sury.org signing key." >&2; return 1; }
+    rm -rf "$tmp"
+    echo "deb [signed-by=/usr/share/keyrings/debsuryorg-archive-keyring.gpg] https://packages.sury.org/php/ ${code} main" \
+        > /etc/apt/sources.list.d/skiff-sury-php.list || return 1
+}
+`
+
+const ensurePHPTemplate = pkgsInstalledFn + phpRepoFns + `
 PHP="{{PHP}}"
 PHP_PKGS="php${PHP}-fpm php${PHP}-cli php${PHP}-mbstring php${PHP}-xml php${PHP}-curl php${PHP}-zip php${PHP}-bcmath php${PHP}-intl php${PHP}-sqlite3 php${PHP}-mysql php${PHP}-pgsql php${PHP}-gd"
+export DEBIAN_FRONTEND=noninteractive
+
+OLD_PPA="$(old_ppa_files)"
+if [ -n "$OLD_PPA" ] && ! sury_configured; then
+    echo "==> Moving PHP updates from ppa:ondrej/php (frozen) to packages.sury.org"
+    if add_sury; then
+        rm -f $OLD_PPA
+        apt_update
+    else
+        echo "Keeping ppa:ondrej/php for now."
+    fi
+fi
+
 if pkgs_installed $PHP_PKGS; then
     echo "PHP ${PHP} is installed"
 else
     echo "==> Installing PHP ${PHP}"
-    export DEBIAN_FRONTEND=noninteractive
     dpkg --configure -a || true
     apt_update
-    if ! apt-cache show "php${PHP}-fpm" >/dev/null 2>&1; then
-        echo "PHP ${PHP} isn't in Ubuntu's repositories; adding ppa:ondrej/php"
-        apt_install software-properties-common
-        add-apt-repository -y ppa:ondrej/php
+    if ! php_available "$PHP"; then
+        if sury_configured; then
+            echo "PHP ${PHP} isn't available from Ubuntu or packages.sury.org for this release." >&2
+            exit 1
+        fi
+        echo "PHP ${PHP} isn't in Ubuntu's repositories; adding packages.sury.org/php"
+        add_sury || exit 1
         apt_update
     fi
     apt_install $PHP_PKGS

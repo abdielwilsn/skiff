@@ -50,5 +50,10 @@
   {{end}}
   </ul>
 </div>
+<div class="note repo-orgs">
+  {{template "i-github"}}<span>Missing an organization's repositories? Organizations can block OAuth apps until an owner approves them. Open
+  {{if $d.ClientID}}<a href="https://github.com/settings/connections/applications/{{$d.ClientID}}" target="_blank" rel="noopener noreferrer">your Skiff app's access on GitHub</a>{{else}}your Skiff OAuth app under GitHub → Settings → Applications{{end}},
+  then press <strong>Grant</strong> next to the organization if you own it, or <strong>Request</strong> to ask an owner. Then press Refresh above.</span>
+</div>
 {{end}}
 {{end}}

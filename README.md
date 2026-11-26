@@ -48,6 +48,11 @@ Then in the panel:
 3. **Settings → Login security**: turn on two-factor login.
 4. **Settings → GitHub**: register a GitHub OAuth app (the page shows the exact
    callback URL), paste the Client ID and secret, then **Connect GitHub**.
+   Repositories you own, collaborate on, or reach through an organization are
+   listed. An organization that restricts OAuth apps hides its repositories
+   until an owner approves yours: open
+   `https://github.com/settings/connections/applications/<client id>` and press
+   **Grant** (or **Request**) next to the organization.
 5. **Repositories → Deploy**: pick a branch and a domain (or the server's IP).
 
 ## What a deploy does
@@ -220,7 +225,7 @@ confirmation first.
 
 Each site picks its PHP version (8.2, 8.3, 8.4 or 8.5; new sites default to
 8.4, which Laravel 13 needs). A version is installed the first time a site uses
-it, from Ubuntu's repositories or `ppa:ondrej/php`, with its own `ondemand`
+it, from Ubuntu's repositories or [packages.sury.org](https://packages.sury.org/php/) (servers set up with the frozen `ppa:ondrej/php` are moved to it), with its own `ondemand`
 PHP-FPM pool, so unused versions cost almost nothing.
 
 Changing a site's version on its page takes effect on the next deploy: Skiff

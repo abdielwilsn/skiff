@@ -243,6 +243,7 @@ label.check-sm input { width: 14px; height: 14px; margin: 0; padding: 0; accent-
 .env-chip .status > i { width: 6px; height: 6px; box-shadow: none; }
 .note { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-sm); background: var(--bg-subtle); color: var(--fg-muted); font-size: 13px; line-height: 1.5; }
 .note .icon { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+.note.repo-orgs { margin-top: 16px; }
 .link.small { font-size: 13px; color: var(--fg-muted); }
 
 .banner {

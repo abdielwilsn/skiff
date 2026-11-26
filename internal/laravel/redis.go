@@ -113,13 +113,14 @@ func (d *Deployer) EnsurePHPRedis(ctx context.Context, w io.Writer, php string) 
 		return fmt.Errorf("unsupported PHP version %q", php)
 	}
 	script := pkgsInstalledFn + fmt.Sprintf(`PHP=%s
-if "php$PHP" -m 2>/dev/null | grep -qx redis; then echo "PHP $PHP has the Redis extension"; exit 0; fi
+# grep without -q, so a broken pipe under pipefail can't turn a match into a failure.
+if "php$PHP" -m 2>/dev/null | grep -x redis >/dev/null; then echo "PHP $PHP has the Redis extension"; exit 0; fi
 echo "==> Installing the Redis extension for PHP $PHP"
 export DEBIAN_FRONTEND=noninteractive
 apt_update
-if apt-cache show "php$PHP-redis" 2>/dev/null | grep -q '^Version:'; then apt_install "php$PHP-redis"; else apt_install php-redis; fi
+if apt-cache show "php$PHP-redis" 2>/dev/null | grep '^Version:' >/dev/null; then apt_install "php$PHP-redis"; else apt_install php-redis; fi
 service "php$PHP-fpm" reload || service "php$PHP-fpm" restart
-"php$PHP" -m | grep -qx redis && echo "Installed"`, php)
+"php$PHP" -m | grep -x redis >/dev/null && echo "Installed"`, php)
 	if err := d.run(ctx, w, script, executor.Options{}); err != nil {
 		return fmt.Errorf("install the PHP Redis extension: %w", err)
 	}

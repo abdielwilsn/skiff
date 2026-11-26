@@ -36,10 +36,15 @@ func TestScriptsHaveNoLeftoverPlaceholders(t *testing.T) {
 		}
 	}
 	s := ensurePHPScript("8.2")
-	for _, want := range []string{"php8.2-fpm", "/run/php/php8.2-fpm-skiff.sock", "/opt/skiff/php/8.2", "ppa:ondrej/php"} {
+	for _, want := range []string{"php8.2-fpm", "/run/php/php8.2-fpm-skiff.sock", "/opt/skiff/php/8.2", "packages.sury.org/php/ ${code} main", "rm -f $OLD_PPA"} {
 		if !strings.Contains(s, want) {
 			t.Errorf("ensure-php script for 8.2 missing %q", want)
 		}
+	}
+	// grep -q after apt-cache exits early; under pipefail that made a
+	// version Ubuntu ships look missing.
+	if strings.Contains(s, "| grep -q '^Version:'") {
+		t.Error("ensure-php checks apt-cache with grep -q")
 	}
 }
 

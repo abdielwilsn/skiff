@@ -159,15 +159,18 @@ fi
 echo "==> Installing Composer"
 if ! command -v composer >/dev/null 2>&1; then
     EXPECTED="$(curl -fsSL https://composer.github.io/installer.sig)"
-    curl -fsSL https://getcomposer.org/installer -o /tmp/composer-setup.php
-    ACTUAL="$(php -r "echo hash_file('sha384', '/tmp/composer-setup.php');")"
+    # A private directory, not a fixed name in /tmp that a site could plant
+    # or swap between the checksum and running it as root.
+    CTMP="$(mktemp -d)"
+    curl -fsSL https://getcomposer.org/installer -o "$CTMP/composer-setup.php"
+    ACTUAL="$(php -r 'echo hash_file("sha384", $argv[1]);' "$CTMP/composer-setup.php")"
     if [ "$EXPECTED" != "$ACTUAL" ]; then
-        rm -f /tmp/composer-setup.php
+        rm -rf "$CTMP"
         echo "Composer installer checksum mismatch" >&2
         exit 1
     fi
-    php /tmp/composer-setup.php --quiet --install-dir=/usr/local/bin --filename=composer
-    rm -f /tmp/composer-setup.php
+    php "$CTMP/composer-setup.php" --quiet --install-dir=/usr/local/bin --filename=composer
+    rm -rf "$CTMP"
 fi
 composer --version
 

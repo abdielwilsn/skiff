@@ -130,11 +130,13 @@ type reposData struct {
 	Repos      []github.Repo
 	Error      string
 	SiteByRepo map[string]int64
+	ClientID   string // for the link to the OAuth app's organization access
 }
 
 func (s *Server) reposPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
 	d := reposData{SiteByRepo: map[string]int64{}}
 	d.Login, _ = s.st.Setting(keyGitHubLogin)
+	d.ClientID, _ = s.st.Setting(keyClientID)
 	d.Connected = s.githubToken() != ""
 	if d.Connected {
 		list, err := s.repos(r.Context(), r.URL.Query().Has("refresh"))

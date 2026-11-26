@@ -127,7 +127,7 @@ func TestRedis(t *testing.T) {
 		switch {
 		case strings.Contains(s, "set_env REDIS_HOST") && envAt < 0:
 			envAt = i
-		case strings.Contains(s, `grep -qx redis`) && extAt < 0:
+		case strings.Contains(s, `grep -x redis`) && extAt < 0:
 			extAt = i
 		case strings.Contains(s, "BUILD-STEP"):
 			buildAt = i
