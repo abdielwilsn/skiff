@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net"
@@ -39,6 +40,7 @@ const (
 	keyGitHubLogin  = "github_login"
 	keyACMEEmail    = "letsencrypt_email"
 	keyPanelDomain  = "panel_domain" // set once the panel has a working HTTPS domain
+	keyProxySecret  = "proxy_secret" // sent by the panel's Nginx proxy (see clientIP)
 )
 
 type Config struct {
@@ -69,6 +71,9 @@ type Server struct {
 
 	setupMu    sync.Mutex
 	setupToken string
+
+	proxySecret string // the panel proxy's X-Skiff-Proxy value
+	twofa       *twoFA
 
 	repoMu    sync.Mutex
 	repoToken string
@@ -136,11 +141,15 @@ func New(cfg Config) (*Server, error) {
 		runner:   cfg.Runner,
 		deployer: &laravel.Deployer{Exec: cfg.Exec, ACMEServer: cfg.ACMEServer, ACMEInsecure: cfg.ACMEInsecure},
 		limiter:  newLimiter(),
+		twofa:    newTwoFA(),
 	}
 	if err := s.loadTemplates(); err != nil {
 		return nil, err
 	}
 	s.needsSetup() // prints the setup token on first start
+	if err := s.loadProxySecret(); err != nil {
+		return nil, err
+	}
 	// Sites still on an untouched older default deploy script get the current one.
 	if n, err := s.st.UpgradeDeployScripts(laravel.PreviousDefaultDeployScripts, laravel.DefaultDeployScript); err != nil {
 		slog.Error("upgrade deploy scripts", "err", err)
@@ -166,6 +175,8 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /setup", s.setupSubmit)
 	m.HandleFunc("GET /login", s.loginPage)
 	m.HandleFunc("POST /login", s.loginSubmit)
+	m.HandleFunc("GET /login/2fa", s.login2FAPage)
+	m.HandleFunc("POST /login/2fa", s.login2FASubmit)
 	m.HandleFunc("POST /logout", s.auth(s.logout))
 
 	m.HandleFunc("GET /{$}", s.auth(s.dashboard))
@@ -227,6 +238,10 @@ func (s *Server) routes() {
 
 	m.HandleFunc("GET /settings", s.auth(s.settingsPage))
 	m.HandleFunc("POST /settings/github", s.auth(s.saveGitHubApp))
+	m.HandleFunc("POST /settings/2fa/start", s.auth(s.start2FA))
+	m.HandleFunc("POST /settings/2fa/enable", s.auth(s.enable2FA))
+	m.HandleFunc("POST /settings/2fa/disable", s.auth(s.disable2FA))
+	m.HandleFunc("POST /settings/sessions/revoke", s.auth(s.revokeSessions))
 	m.HandleFunc("POST /settings/panel", s.auth(s.enablePanelHTTPS))
 	m.HandleFunc("POST /settings/panel/disable", s.auth(s.disablePanelHTTPS))
 	m.HandleFunc("GET /github/connect", s.auth(s.githubConnect))
@@ -249,6 +264,12 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if s.cfg.BaseURL == "" && !isLoopback(r) {
 		if domain := s.panelHTTPSDomain(); domain != "" {
 			http.Redirect(w, r, "https://"+domain+r.URL.RequestURI(), http.StatusTemporaryRedirect)
+			return
+		}
+		// Until then the panel's own port speaks HTTPS (self-signed); plain
+		// HTTP is for local clients only (SSH tunnels, Skiff's Nginx proxy).
+		if r.TLS == nil {
+			http.Redirect(w, r, "https://"+r.Host+r.URL.RequestURI(), http.StatusTemporaryRedirect)
 			return
 		}
 	}
@@ -556,4 +577,33 @@ func (s *Server) baseURL(r *http.Request) string {
 
 func (s *Server) secureCookies(r *http.Request) bool {
 	return r.TLS != nil || strings.HasPrefix(s.baseURL(r), "https://")
+}
+
+// loadProxySecret reads (or creates) the secret the panel's Nginx proxy sends.
+// A panel proxy set up before the secret existed gets it added, so the client
+// IPs it forwards stay trusted.
+func (s *Server) loadProxySecret() error {
+	secret, err := s.st.Setting(keyProxySecret)
+	if err != nil {
+		return err
+	}
+	if secret == "" {
+		secret = randomHex(32)
+		if err := s.st.SetSetting(keyProxySecret, secret); err != nil {
+			return err
+		}
+	}
+	s.proxySecret = secret
+	if s.cfg.DryRun || s.panelHTTPSDomain() == "" {
+		return nil
+	}
+	if b, err := os.ReadFile(laravel.PanelNginxConfigPath); err == nil && !strings.Contains(string(b), proxyHeader+" "+secret+";") {
+		if _, err := s.runner.Enqueue(nil, "panel-proxy", "Secure the panel's proxy",
+			func(ctx context.Context, log io.Writer) error {
+				return s.deployer.SetPanelProxySecret(ctx, log, secret)
+			}, nil); err != nil {
+			slog.Error("queue panel proxy update", "err", err)
+		}
+	}
+	return nil
 }

@@ -10,14 +10,17 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
+	"skiff/internal/dotenv"
 	"skiff/internal/executor"
 	"skiff/internal/jobs"
 	"skiff/internal/store"
@@ -34,6 +37,12 @@ Usage:
   skiff reset-panel-domain    Stop redirecting the panel to its HTTPS domain
                               (use if the domain stops working)
   skiff version               Print the version
+  skiff tls-fingerprint       Print the SHA-256 fingerprint of the panel's
+                              self-signed certificate, to check the browser's
+  skiff disable-2fa           Turn off two-factor login (lost phone)
+  skiff env-exec FILE CMD...  Run CMD with the variables in FILE (a .env).
+                              Used by app services, as the site user, so the
+                              file is read with that user's permissions
 
 Run "skiff serve -h" for flags.
 `
@@ -53,6 +62,12 @@ func main() {
 		err = resetPanelDomain(args)
 	case "version":
 		fmt.Println(version)
+	case "env-exec":
+		err = envExec(args)
+	case "tls-fingerprint":
+		err = tlsFingerprint(args)
+	case "disable-2fa":
+		err = disable2FA(args)
 	case "help":
 		fmt.Print(usage)
 	default:
@@ -120,10 +135,20 @@ func serve(args []string) error {
 		return err
 	}
 
-	srv := &http.Server{Addr: *addr, Handler: handler, ReadHeaderTimeout: 10 * time.Second}
+	// HTTPS (self-signed until the panel has a domain) and plain HTTP for
+	// local clients, on the same port.
+	tlsCfg, fingerprint, err := web.PanelTLS(*dataDir)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", *addr)
+	if err != nil {
+		return err
+	}
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
-	go func() { errc <- srv.ListenAndServe() }()
-	slog.Info("skiff is running", "addr", *addr, "version", version, "data", *dataDir, "dry_run", *dryRun)
+	go func() { errc <- srv.Serve(web.NewMuxListener(ln, tlsCfg)) }()
+	slog.Info("skiff is running", "addr", *addr, "version", version, "data", *dataDir, "dry_run", *dryRun, "tls_fingerprint", fingerprint)
 
 	select {
 	case err := <-errc:
@@ -164,7 +189,7 @@ func resetPanelDomain(args []string) error {
 		return err
 	}
 	fmt.Printf("The panel no longer redirects to https://%s.\n", domain)
-	fmt.Println("Within a few seconds it is reachable directly at http://<server-ip>:<port> again.")
+	fmt.Println("Within a few seconds it is reachable directly at https://<server-ip>:<port> again.")
 	return nil
 }
 
@@ -189,6 +214,70 @@ func resetAdmin(args []string) error {
 		return err
 	}
 	fmt.Println("Admin account removed. Create a new one at:")
-	fmt.Printf("  http://<this-server>:<port>/setup?token=%s\n", token)
+	fmt.Printf("  https://<this-server>:<port>/setup?token=%s\n", token)
+	return nil
+}
+
+// envExec loads a .env file and replaces itself with the command. Apps' systemd
+// services start through it so the file is opened by the (unprivileged) site
+// user rather than by systemd as root, which would follow a symlink the site
+// planted to any root-only file. A missing file is fine.
+func envExec(args []string) error {
+	if len(args) < 2 {
+		return errors.New("usage: skiff env-exec FILE CMD [ARGS...]")
+	}
+	env := os.Environ()
+	f, err := os.Open(args[0])
+	switch {
+	case err == nil:
+		vars, perr := dotenv.Parse(f)
+		f.Close()
+		if perr != nil {
+			return fmt.Errorf("read %s: %w", args[0], perr)
+		}
+		for _, kv := range vars {
+			env = append(env, kv[0]+"="+kv[1])
+		}
+	case errors.Is(err, os.ErrNotExist):
+	default:
+		return err
+	}
+	path := args[1]
+	if !strings.Contains(path, "/") {
+		if path, err = exec.LookPath(path); err != nil {
+			return err
+		}
+	}
+	return syscall.Exec(path, args[1:], env)
+}
+
+func tlsFingerprint(args []string) error {
+	fs := flag.NewFlagSet("tls-fingerprint", flag.ExitOnError)
+	dataDir := dataFlag(fs)
+	_ = fs.Parse(args)
+	fp, err := web.TLSFingerprint(*dataDir)
+	if err != nil {
+		return err
+	}
+	fmt.Println(fp)
+	return nil
+}
+
+// disable2FA turns off two-factor login for every account, for when the
+// phone with the authenticator is lost. It needs root on the server.
+func disable2FA(args []string) error {
+	fs := flag.NewFlagSet("disable-2fa", flag.ExitOnError)
+	dataDir := dataFlag(fs)
+	_ = fs.Parse(args)
+	st, err := store.Open(filepath.Join(*dataDir, "skiff.db"))
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	n, err := st.DisableAllTOTP()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Two-factor login turned off for %d account(s). Log in with just the password, then set it up again in Settings.\n", n)
 	return nil
 }

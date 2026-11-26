@@ -71,10 +71,12 @@ type recorder struct {
 	scripts []string
 	stdin   []string
 	env     [][]string
+	users   []string
 }
 
 func (r *recorder) Run(_ context.Context, script string, opt executor.Options, _ io.Writer) error {
 	r.scripts = append(r.scripts, script)
+	r.users = append(r.users, opt.User)
 	r.env = append(r.env, opt.Env)
 	in := ""
 	if opt.Stdin != nil {

@@ -47,12 +47,12 @@ func TestDeployBuildsReleaseThenSwitches(t *testing.T) {
 	}
 	all := strings.Join(f.scripts, "\n----\n")
 	order := []string{
-		`--work-tree="$REL" checkout -f HEAD`,             // code exported into a new release
-		`ln -s "$SH/.env" .env`,                           // shared .env linked in
-		`ln -s "$SH/storage" storage`,                     // shared storage linked in
-		"BUILD-STEP",                                      // deploy script runs in the release
-		".skiff-ok",                                       // marked good only after it succeeded
-		"mv -Tf current.next current",                     // atomic switch
+		`tar -xpf - -C "$REL"`,        // code unpacked into a new release by the site user
+		`ln -s "$SH/.env" .env`,       // shared .env linked in
+		`ln -s "$SH/storage" storage`, // shared storage linked in
+		"BUILD-STEP",                  // deploy script runs in the release
+		".skiff-ok",                   // marked good only after it succeeded
+		"mv -Tf current.next current", // atomic switch
 		"root /home/skiff/app.example.com/current/public", // nginx follows current
 		"Kept $kept release(s)",                           // cleanup
 	}
@@ -164,10 +164,90 @@ func TestDeployCommit(t *testing.T) {
 	if err := (&Deployer{Exec: f}).DeployWith(context.Background(), &bytes.Buffer{}, testSite, "", DeployOptions{Commit: sha}); err != nil {
 		t.Fatal(err)
 	}
-	if !f.ran("REF='"+sha+"'") || !f.ran(`rev-parse HEAD > "$REL/.skiff-commit"`) {
+	if !f.ran("REF='"+sha+"'") || !f.ran(`rev-parse HEAD > "$EXPORT/.skiff-commit"`) {
 		t.Errorf("scripts: %v", f.scripts)
 	}
 	if err := (&Deployer{Exec: f}).DeployWith(context.Background(), &bytes.Buffer{}, testSite, "", DeployOptions{Commit: "main; rm -rf /"}); err == nil {
 		t.Error("accepted a bad commit")
+	}
+}
+
+// The GitHub token must never reach a process running as the site user:
+// sites, their dependencies and deploy scripts all run as that user.
+func TestTokenNeverReachesTheSiteUser(t *testing.T) {
+	rec := &recorder{}
+	if err := (&Deployer{Exec: rec}).Deploy(context.Background(), &bytes.Buffer{}, testSite, "gho_SECRET", nil); err != nil {
+		t.Fatal(err)
+	}
+	fetched := false
+	for i, s := range rec.scripts {
+		hasToken := strings.Contains(strings.Join(rec.env[i], "\n"), "GIT_CONFIG_VALUE_0")
+		if hasToken && rec.users[i] != "" {
+			t.Errorf("token passed to a script running as %q:\n%s", rec.users[i], s)
+		}
+		if strings.Contains(s, "git clone") {
+			fetched = true
+			if !hasToken || rec.users[i] != "" {
+				t.Error("git should run as root with the token")
+			}
+			// Inside the root script, the site user is only reached through
+			// as_site, after the token's variables are unset, with env -i.
+			unset := strings.Index(s, "unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0")
+			first := strings.Index(s, "as_site mkdir")
+			// Files must stay readable by Nginx and PHP-FPM: the site user
+			// unpacks with umask 022, not the cache's 077.
+			umask := strings.LastIndex(s[:max(first, 0)], "umask ")
+			if unset < 0 || first < unset || !strings.Contains(s, "runuser -u skiff -- env -i") || umask < 0 || !strings.HasPrefix(s[umask:], "umask 022") {
+				t.Errorf("fetch script:\n%s", s)
+			}
+			if !strings.Contains(s, "CACHE='/var/lib/skiff/repos/app.example.com'") || strings.Contains(s, `$SITE/repo`) {
+				t.Error("the git cache must live in the root-only repos dir")
+			}
+		}
+		if strings.Contains(s, "gho_SECRET") {
+			t.Error("token in a script")
+		}
+	}
+	if !fetched {
+		t.Fatal("no fetch")
+	}
+}
+
+// Site files are read and written as the site user, never as root.
+func TestSiteFilesHandledAsSiteUser(t *testing.T) {
+	rec := &recorder{}
+	d := &Deployer{Exec: rec}
+	ctx := context.Background()
+	db := SitesRoot + "/app.example.com/shared/database/database.sqlite"
+	file := BackupRoot + "/sqlite-app.example.com-database_database.sqlite/20261126-030000-manual.sqlite.gz"
+	if _, err := d.BackupSQLite(ctx, &bytes.Buffer{}, db, file); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RestoreSQLite(ctx, &bytes.Buffer{}, db, file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SQLiteDatabases(ctx, []string{"app.example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Logs(ctx, testSite); err != nil {
+		t.Fatal(err)
+	}
+	backup, restore, scan, logs := rec.scripts[0], rec.scripts[1], rec.scripts[2], rec.scripts[3]
+	for name, s := range map[string]string{"backup": backup, "restore": restore, "logs": logs} {
+		if !strings.Contains(s, "runuser -u skiff --") {
+			t.Errorf("%s doesn't switch to the site user:\n%s", name, s)
+		}
+	}
+	if strings.Contains(backup, `sqlite3 "$DB"`) || !strings.Contains(backup, `sqlite3 "$1"`) {
+		t.Error("sqlite3 must read the database as the site user")
+	}
+	if strings.Contains(restore, "chown") || strings.Index(restore, "runuser -u skiff") > strings.Index(restore, `mv -f "$TMP" "$DB"`) {
+		t.Errorf("restore must write as the site user:\n%s", restore)
+	}
+	if rec.users[2] != SiteUser || !strings.Contains(scan, "-s ") {
+		t.Error("the SQLite scan must run as the site user")
+	}
+	if strings.Contains(logs, "tail -n 150 \"$LOG\"\nfi`") {
+		t.Error("laravel.log must be read as the site user")
 	}
 }

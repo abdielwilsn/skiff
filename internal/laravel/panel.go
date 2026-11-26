@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"skiff/internal/executor"
@@ -32,6 +33,7 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Skiff-Proxy {{SECRET}};
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_read_timeout 120s;
@@ -39,13 +41,45 @@ server {
 }
 `
 
-func PanelNginxConfig(domain, port string) string {
-	return strings.NewReplacer("{{DOMAIN}}", domain, "{{PORT}}", port).Replace(panelNginxTemplate)
+// PanelNginxConfig is the panel's proxy config. secret is sent to the panel
+// in X-Skiff-Proxy so it knows a local request came through this proxy; the
+// file is root-only so sites on the server can't read it.
+func PanelNginxConfig(domain, port, secret string) string {
+	return strings.NewReplacer("{{DOMAIN}}", domain, "{{PORT}}", port, "{{SECRET}}", secret).Replace(panelNginxTemplate)
+}
+
+var proxySecretRe = regexp.MustCompile(`^[0-9a-f]{32,128}$`)
+
+// SetPanelProxySecret adds (or replaces) the X-Skiff-Proxy header in an
+// existing panel proxy config, keeping certbot's edits, and makes the file
+// root-only. The secret is passed in the environment, never on a command line.
+func (d *Deployer) SetPanelProxySecret(ctx context.Context, w io.Writer, secret string) error {
+	if !proxySecretRe.MatchString(secret) {
+		return fmt.Errorf("invalid proxy secret")
+	}
+	step(w, "Adding the proxy secret to the panel's Nginx config")
+	script := fmt.Sprintf(`CONF=%s
+[ -f "$CONF" ] || { echo "No panel proxy config; nothing to do."; exit 0; }
+umask 077
+awk '
+    /proxy_set_header X-Skiff-Proxy/ { next }
+    { print }
+    /proxy_set_header X-Real-IP/ {
+        match($0, /^[ \t]*/)
+        printf "%%sproxy_set_header X-Skiff-Proxy %%s;\n", substr($0, 1, RLENGTH), ENVIRON["SKIFF_PROXY_SECRET"]
+    }
+' "$CONF" > "$CONF.skiff-tmp"
+chmod 600 "$CONF.skiff-tmp"
+mv -f "$CONF.skiff-tmp" "$CONF"
+echo "Added to $(grep -c 'X-Skiff-Proxy' "$CONF") location(s)"
+nginx -t
+service nginx reload`, shell.Quote(PanelNginxConfigPath))
+	return d.run(ctx, w, script, executor.Options{Env: []string{"SKIFF_PROXY_SECRET=" + secret}})
 }
 
 // EnablePanelHTTPS puts the panel behind Nginx at domain and gets it a
 // certificate. port is the port the panel listens on locally.
-func (d *Deployer) EnablePanelHTTPS(ctx context.Context, w io.Writer, domain, port, email string) error {
+func (d *Deployer) EnablePanelHTTPS(ctx context.Context, w io.Writer, domain, port, email, secret string) error {
 	if ok, why := HTTPSEligible(domain); !ok {
 		return fmt.Errorf("%s", why)
 	}
@@ -55,11 +89,13 @@ func (d *Deployer) EnablePanelHTTPS(ctx context.Context, w io.Writer, domain, po
 
 	step(w, "Configuring Nginx to proxy %s to the panel", domain)
 	q := shell.Quote
-	proxy := fmt.Sprintf(`cat > %[1]s
+	proxy := fmt.Sprintf(`umask 077
+cat > %[1]s
+chmod 600 %[1]s
 ln -sfn %[1]s %[2]s
 nginx -t
 service nginx reload`, q(PanelNginxConfigPath), q(panelNginxEnabled))
-	if err := d.run(ctx, w, proxy, executor.Options{Stdin: strings.NewReader(PanelNginxConfig(domain, port))}); err != nil {
+	if err := d.run(ctx, w, proxy, executor.Options{Stdin: strings.NewReader(PanelNginxConfig(domain, port, secret))}); err != nil {
 		return fmt.Errorf("configure nginx: %w", err)
 	}
 

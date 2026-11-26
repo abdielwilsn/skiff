@@ -163,7 +163,7 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		redirect(w, r, "/setup")
 		return
 	}
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	d := loginData{Username: strings.TrimSpace(r.FormValue("username"))}
 	if !s.limiter.allowed(ip) {
 		d.Error = "Too many failed attempts. Try again in a few minutes."
@@ -185,6 +185,12 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, "login", http.StatusUnauthorized, page{Title: "Log in", Data: d})
 		return
 	}
+	// The password was right; with two-factor login on, a code comes next.
+	// The failure count isn't reset until that step succeeds.
+	if u.TOTPSecret != "" {
+		s.startPendingLogin(w, r, u.ID)
+		return
+	}
 	s.limiter.reset(ip)
 	if err := s.startSession(w, r, u.ID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -201,20 +207,32 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request, _ store.Session)
 	redirect(w, r, "/login")
 }
 
-func clientIP(r *http.Request) string {
+// proxyHeader carries a secret only Skiff's Nginx proxy knows (its config is
+// root-only), proving a local request came through that proxy.
+const proxyHeader = "X-Skiff-Proxy"
+
+// clientIP is the address to rate-limit by. Behind Skiff's own Nginx proxy
+// every request comes from loopback, so the X-Real-IP that proxy sets (it
+// overwrites any client-supplied value) is trusted, but only when the request
+// also carries the proxy's secret. Any other local process (every site runs on
+// this machine) is keyed by its own address, so it can't invent a new client
+// IP per attempt and get around the login limit.
+func (s *Server) clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
-	// Behind Skiff's own Nginx proxy every request comes from loopback; trust
-	// the X-Real-IP that proxy sets (it overwrites any client-supplied value).
-	// Headers from non-local peers are ignored: they are trivially spoofable.
-	if isLoopback(r) {
+	if isLoopback(r) && s.fromProxy(r) {
 		if ip := net.ParseIP(strings.TrimSpace(r.Header.Get("X-Real-IP"))); ip != nil {
 			return ip.String()
 		}
 	}
 	return host
+}
+
+func (s *Server) fromProxy(r *http.Request) bool {
+	got := r.Header.Get(proxyHeader)
+	return s.proxySecret != "" && got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(s.proxySecret)) == 1
 }
 
 // limiter allows 10 failed logins per IP per 15 minutes.

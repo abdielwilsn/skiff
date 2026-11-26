@@ -81,6 +81,9 @@ var migrations = []string{
 	`ALTER TABLE sites ADD COLUMN parent_id INTEGER NOT NULL DEFAULT 0`,
 	`ALTER TABLE databases ADD COLUMN engine TEXT NOT NULL DEFAULT 'mysql'`,
 	`ALTER TABLE sites ADD COLUMN redis INTEGER NOT NULL DEFAULT 0`,
+	`ALTER TABLE users ADD COLUMN totp_secret TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE users ADD COLUMN recovery_codes TEXT NOT NULL DEFAULT ''`,
+	`ALTER TABLE sessions ADD COLUMN last_seen INTEGER NOT NULL DEFAULT 0`,
 }
 
 const schemaV1 = `
@@ -201,7 +204,12 @@ type User struct {
 	ID           int64
 	Username     string
 	PasswordHash string
+	TOTPSecret   string   // base32; "" = two-factor login is off
+	Recovery     []string // SHA-256 hashes of unused recovery codes
 }
+
+// SessionIdle ends a session nobody has used for this long.
+const SessionIdle = 12 * time.Hour
 
 type Session struct {
 	UserID   int64
@@ -227,15 +235,72 @@ func (s *Store) CreateUser(username, passwordHash string) (int64, error) {
 	return res.LastInsertId()
 }
 
-func (s *Store) UserByName(username string) (User, error) {
+func scanUser(row scanner) (User, error) {
 	var u User
-	err := s.db.QueryRow(`SELECT id, username, password_hash FROM users WHERE username = ?`, username).
-		Scan(&u.ID, &u.Username, &u.PasswordHash)
+	var rec string
+	err := row.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.TOTPSecret, &rec)
 	if errors.Is(err, sql.ErrNoRows) {
 		return u, ErrNotFound
 	}
+	if rec != "" {
+		u.Recovery = strings.Split(rec, "\n")
+	}
 	return u, err
 }
+
+const userCols = `id, username, password_hash, totp_secret, recovery_codes`
+
+func (s *Store) UserByName(username string) (User, error) {
+	return scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE username = ?`, username))
+}
+
+func (s *Store) UserByID(id int64) (User, error) {
+	return scanUser(s.db.QueryRow(`SELECT `+userCols+` FROM users WHERE id = ?`, id))
+}
+
+// SetTOTP turns two-factor login on (secret and recovery-code hashes) or off
+// ("" and nil).
+func (s *Store) SetTOTP(userID int64, secret string, recoveryHashes []string) error {
+	_, err := s.db.Exec(`UPDATE users SET totp_secret = ?, recovery_codes = ? WHERE id = ?`,
+		secret, strings.Join(recoveryHashes, "\n"), userID)
+	return err
+}
+
+// UseRecoveryCode removes a recovery code's hash if the user has it.
+func (s *Store) UseRecoveryCode(userID int64, hash string) (bool, error) {
+	u, err := s.UserByID(userID)
+	if err != nil {
+		return false, err
+	}
+	var left []string
+	found := false
+	for _, h := range u.Recovery {
+		if h == hash && !found {
+			found = true
+			continue
+		}
+		left = append(left, h)
+	}
+	if !found {
+		return false, nil
+	}
+	_, err = s.db.Exec(`UPDATE users SET recovery_codes = ? WHERE id = ?`, strings.Join(left, "\n"), userID)
+	return err == nil, err
+}
+
+// DisableAllTOTP turns two-factor login off for every account (the
+// "skiff disable-2fa" escape hatch) and returns how many had it on.
+func (s *Store) DisableAllTOTP() (int64, error) {
+	res, err := s.db.Exec(`UPDATE users SET totp_secret = '', recovery_codes = '' WHERE totp_secret <> ''`)
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// HashToken is the SHA-256 hex of a secret, as stored for sessions and
+// recovery codes.
+func HashToken(t string) string { return hashToken(t) }
 
 // ResetUsers removes every account and session, so the setup flow runs again.
 func (s *Store) ResetUsers() error {
@@ -249,26 +314,60 @@ func (s *Store) ResetUsers() error {
 // CreateSession returns the raw token to put in the cookie; only its hash is stored.
 func (s *Store) CreateSession(userID int64, ttl time.Duration) (string, error) {
 	token := randomHex(32)
-	_, err := s.db.Exec(`INSERT INTO sessions(token, user_id, csrf, expires_at) VALUES(?,?,?,?)`,
-		hashToken(token), userID, randomHex(32), time.Now().Add(ttl).Unix())
+	_, err := s.db.Exec(`INSERT INTO sessions(token, user_id, csrf, expires_at, last_seen) VALUES(?,?,?,?,?)`,
+		hashToken(token), userID, randomHex(32), time.Now().Add(ttl).Unix(), now())
 	if err != nil {
 		return "", err
 	}
-	_, _ = s.db.Exec(`DELETE FROM sessions WHERE expires_at <= ?`, now())
+	_, _ = s.db.Exec(`DELETE FROM sessions WHERE expires_at <= ? OR (last_seen > 0 AND last_seen <= ?)`,
+		now(), now()-int64(SessionIdle.Seconds()))
 	return token, nil
 }
 
+// Session returns the live session for a cookie token. Sessions end 30 days
+// after login or after SessionIdle without use; using one keeps it alive.
 func (s *Store) Session(token string) (Session, error) {
 	var se Session
+	var lastSeen int64
+	t := now()
+	h := hashToken(token)
 	err := s.db.QueryRow(`
-		SELECT s.user_id, u.username, s.csrf
+		SELECT s.user_id, u.username, s.csrf, s.last_seen
 		FROM sessions s JOIN users u ON u.id = s.user_id
-		WHERE s.token = ? AND s.expires_at > ?`, hashToken(token), now()).
-		Scan(&se.UserID, &se.Username, &se.CSRF)
+		WHERE s.token = ? AND s.expires_at > ?`, h, t).
+		Scan(&se.UserID, &se.Username, &se.CSRF, &lastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return se, ErrNotFound
 	}
-	return se, err
+	if err != nil {
+		return se, err
+	}
+	if lastSeen > 0 && t-lastSeen >= int64(SessionIdle.Seconds()) {
+		_, _ = s.db.Exec(`DELETE FROM sessions WHERE token = ?`, h)
+		return se, ErrNotFound
+	}
+	if t-lastSeen >= 60 { // at most one write a minute
+		_, _ = s.db.Exec(`UPDATE sessions SET last_seen = ? WHERE token = ?`, t, h)
+	}
+	return se, nil
+}
+
+// SessionCount is how many live sessions a user has.
+func (s *Store) SessionCount(userID int64) (int, error) {
+	var n int
+	err := s.db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE user_id = ? AND expires_at > ? AND (last_seen = 0 OR last_seen > ?)`,
+		userID, now(), now()-int64(SessionIdle.Seconds())).Scan(&n)
+	return n, err
+}
+
+// DeleteOtherSessions logs the user out everywhere except the session with
+// this cookie token, and returns how many sessions ended.
+func (s *Store) DeleteOtherSessions(userID int64, keepToken string) (int64, error) {
+	res, err := s.db.Exec(`DELETE FROM sessions WHERE user_id = ? AND token <> ?`, userID, hashToken(keepToken))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }
 
 func (s *Store) DeleteSession(token string) error {

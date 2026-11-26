@@ -23,6 +23,9 @@ import (
 
 const unitDir = "/etc/systemd/system"
 
+// SkiffBin is where the installer puts the skiff binary.
+const SkiffBin = "/usr/local/bin/skiff"
+
 func unitPrefix(domain string) string { return "skiff-" + domain }
 func appUnit(domain string) string    { return unitPrefix(domain) + "-app.service" }
 func appStartScript(domain string) string {
@@ -181,8 +184,9 @@ Type=simple
 User=%[5]s
 Group=%[5]s
 WorkingDirectory=$APP
-EnvironmentFile=-$SITE/shared/.env
-ExecStart=%[1]s
+# The .env is loaded by "skiff env-exec" running as the site user, not by
+# systemd as root: root would follow a symlink the site planted.
+ExecStart=%[7]s env-exec $SITE/shared/.env %[1]s
 Restart=always
 RestartSec=3
 TimeoutStopSec=30
@@ -200,7 +204,7 @@ for i in $(seq 1 60); do
 done
 echo "The app didn't answer on port %[6]d within 60 seconds. Last log lines:" >&2
 journalctl -u %[3]s -n 25 --no-pager -o cat >&2 || true
-exit 1`, appStartScript(site.Domain), unitDir, appUnit(site.Domain), site.Domain, SiteUser, site.Port)
+exit 1`, appStartScript(site.Domain), unitDir, appUnit(site.Domain), site.Domain, SiteUser, site.Port, SkiffBin)
 	return d.run(ctx, w, script, executor.Options{Stdin: strings.NewReader(start)})
 }
 
@@ -260,13 +264,16 @@ func (d *Deployer) Logs(ctx context.Context, site store.Site) (string, error) {
 	p := unitPrefix(site.Domain)
 	script := locate(site.Domain) + fmt.Sprintf(`echo "==> Background processes (journal, newest last)"
 journalctl --no-pager -n 200 -o short-iso -u '%[1]s-*' 2>/dev/null | tail -n 200 || true
-LOG="$SITE/shared/storage/logs/laravel.log"
-[ -f "$LOG" ] || LOG="$APP/storage/logs/laravel.log"
+# The app's own log is read as the site user, which owns it, so a symlink
+# there can't make root read anything else.
+runuser -u %[2]s -- bash -c '
+LOG="$1/shared/storage/logs/laravel.log"
+[ -f "$LOG" ] || LOG="$2/storage/logs/laravel.log"
 if [ -f "$LOG" ]; then
     echo
     echo "==> $LOG (last 150 lines)"
     tail -n 150 "$LOG"
-fi`, p)
+fi' _ "$SITE" "$APP"`, p, SiteUser)
 	var out bytes.Buffer
 	err := d.Exec.Run(ctx, script, executor.Options{}, &out)
 	return out.String(), err

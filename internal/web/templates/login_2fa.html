@@ -1,0 +1,19 @@
+{{define "content"}}
+<div class="auth">
+  <div class="auth-head">
+    {{template "logo"}}
+    <h1>Two-factor login</h1>
+    <p>Enter the 6-digit code from your authenticator app.</p>
+  </div>
+  {{with .Data.Error}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+  <form method="post" action="/login/2fa" class="card">
+    <div class="card-body stack">
+      <label>Code
+        <input name="code" required autocomplete="one-time-code" inputmode="numeric" autofocus spellcheck="false" maxlength="12" placeholder="123456">
+      </label>
+      <button class="btn primary">Log in</button>
+    </div>
+  </form>
+  <p class="hint auth-foot">No phone? Enter one of your recovery codes instead. Lost both? Run <code>sudo skiff disable-2fa</code> on the server.</p>
+</div>
+{{end}}

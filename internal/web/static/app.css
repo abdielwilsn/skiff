@@ -194,6 +194,15 @@ strong { font-weight: 600; }
 }
 .menu-item:hover { background: var(--bg-hover); color: var(--fg); }
 
+/* Login security */
+.totp-setup { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.totp-qr { width: 180px; height: 180px; border-radius: 8px; background: #fff; padding: 8px; image-rendering: pixelated; flex: none; }
+.totp-key { font-size: 15px; letter-spacing: .08em; word-break: break-all; }
+.recovery-codes { list-style: none; margin: 4px 0 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+.recovery-codes code { font-size: 14px; }
+.note.recovery { border: 1px solid var(--warn-border); background: var(--warn-bg); color: var(--fg); }
+.note.recovery > .icon { color: var(--warn); }
+
 /* Databases page */
 .service-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
 .service-card { display: flex; flex-direction: column; }

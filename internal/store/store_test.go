@@ -176,3 +176,31 @@ func TestSitesAndJobs(t *testing.T) {
 		t.Fatal("job should outlive its site with site_id NULL")
 	}
 }
+
+func TestIdleSessionsEnd(t *testing.T) {
+	s := open(t)
+	id, _ := s.CreateUser("admin", "hash")
+	tok, _ := s.CreateSession(id, 30*24*time.Hour)
+	idleFor := func(d time.Duration) {
+		s.db.Exec(`UPDATE sessions SET last_seen = ? WHERE token = ?`, time.Now().Add(-d).Unix(), hashToken(tok))
+	}
+	idleFor(11 * time.Hour)
+	if _, err := s.Session(tok); err != nil {
+		t.Fatalf("used 11h ago: %v", err)
+	}
+	var seen int64
+	s.db.QueryRow(`SELECT last_seen FROM sessions WHERE token = ?`, hashToken(tok)).Scan(&seen)
+	if time.Since(time.Unix(seen, 0)) > time.Minute {
+		t.Error("using a session should keep it alive")
+	}
+	idleFor(SessionIdle + time.Minute)
+	if _, err := s.Session(tok); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("idle session accepted: %v", err)
+	}
+	// Sessions from before last_seen existed (0) still work, then get tracked.
+	old, _ := s.CreateSession(id, time.Hour)
+	s.db.Exec(`UPDATE sessions SET last_seen = 0 WHERE token = ?`, hashToken(old))
+	if _, err := s.Session(old); err != nil {
+		t.Fatalf("pre-upgrade session: %v", err)
+	}
+}

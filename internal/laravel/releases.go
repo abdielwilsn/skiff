@@ -24,12 +24,20 @@ import (
 //	  releases/<id>/                        one checkout per deploy
 //	  shared/.env, shared/storage/,         state every release links to
 //	  shared/database/database.sqlite
-//	  repo/                                 git cache, so fetches stay small
+//	/var/lib/skiff/repos/<domain>/          git cache, root only, so fetches
+//	                                        stay small and the GitHub token
+//	                                        never reaches the site user
 //
 // A deploy builds a new release next to the live one and only switches
 // "current" (an atomic rename) once the deploy script has succeeded, so a
 // failed deploy never touches the live site. Rollback points "current" at an
 // earlier release.
+
+// RepoCacheRoot holds each site's git cache, root-only, so the GitHub token
+// used to fetch never reaches the site user.
+const RepoCacheRoot = "/var/lib/skiff/repos"
+
+func repoCachePath(domain string) string { return RepoCacheRoot + "/" + domain }
 
 // KeepReleases is how many successful releases are kept for rollback.
 const KeepReleases = 5
@@ -114,8 +122,11 @@ func (d *Deployer) DeployWith(ctx context.Context, w io.Writer, site store.Site,
 	id := newReleaseID()
 	rel := dir + "/releases/" + id
 
-	// 1. Code. Only this step sees the GitHub token; the deploy script (and the
-	// composer packages it runs) never do.
+	// 1. Code. Git runs as root in a root-only cache, so the GitHub token is
+	// never in a process the site user can read (sites, their dependencies
+	// and deploy scripts all run as that user). The commit is checked out into
+	// a root-only temp dir and handed over as a tar stream that the site user
+	// unpacks, so every file in the release belongs to it.
 	ref := site.Branch
 	if commit != "" {
 		ref = commit
@@ -124,24 +135,40 @@ func (d *Deployer) DeployWith(ctx context.Context, w io.Writer, site store.Site,
 		step(w, "Fetching %s (%s)", site.Repo, site.Branch)
 	}
 	fetch := fmt.Sprintf(`SITE=%[1]s
-REPO="$SITE/repo"
+CACHE=%[7]s
 REL=%[4]s
 REF=%[6]s
-mkdir -p "$SITE/releases"
-if [ ! -d "$REPO/.git" ]; then
-    git clone -q --depth=1 --single-branch --branch %[2]s %[3]s "$REPO"
-    [ "$REF" = %[2]s ] || { git -C "$REPO" fetch --depth=1 origin "$REF" && git -C "$REPO" reset -q --hard FETCH_HEAD; }
+umask 077
+mkdir -p %[8]s
+if [ ! -d "$CACHE/.git" ]; then
+    rm -rf -- "$CACHE"
+    git clone -q --depth=1 --single-branch --branch %[2]s %[3]s "$CACHE"
+    [ "$REF" = %[2]s ] || { git -C "$CACHE" fetch --depth=1 origin "$REF" && git -C "$CACHE" reset -q --hard FETCH_HEAD; }
 else
-    git -C "$REPO" fetch --depth=1 origin "$REF"
-    git -C "$REPO" reset -q --hard FETCH_HEAD
+    git -C "$CACHE" remote set-url origin %[3]s
+    git -C "$CACHE" fetch --depth=1 origin "$REF"
+    git -C "$CACHE" reset -q --hard FETCH_HEAD
 fi
-git -C "$REPO" log -1 --format='Commit %%h: %%s (%%an, %%cr)'
-mkdir "$REL"
-git --git-dir="$REPO/.git" --work-tree="$REL" checkout -f HEAD -- .
-git -C "$REPO" log -1 --format='%%h %%s' > "$REL/.skiff-revision"
-git -C "$REPO" rev-parse HEAD > "$REL/.skiff-commit"
-echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.Repo)), q(rel), id, q(ref))
-	if err := d.run(ctx, w, fetch, executor.Options{User: SiteUser, Env: github.GitEnv(token)}); err != nil {
+unset GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+git -C "$CACHE" log -1 --format='Commit %%h: %%s (%%an, %%cr)'
+EXPORT="$(mktemp -d %[8]s/.export.XXXXXX)"
+trap 'rm -rf -- "$EXPORT"' EXIT
+( umask 022 && git --git-dir="$CACHE/.git" --work-tree="$EXPORT" checkout -f HEAD -- . )
+git -C "$CACHE" log -1 --format='%%h %%s' > "$EXPORT/.skiff-revision"
+git -C "$CACHE" rev-parse HEAD > "$EXPORT/.skiff-commit"
+chmod 644 "$EXPORT/.skiff-revision" "$EXPORT/.skiff-commit"
+# The site user creates and fills the release, with a clean environment and
+# the usual umask (the cache above is 077), keeping the files' modes so Nginx
+# and PHP-FPM can read them.
+umask 022
+as_site() { runuser -u %[9]s -- env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=%[10]s LANG=C.UTF-8 "$@"; }
+as_site mkdir -p "$SITE/releases"
+as_site mkdir "$REL"
+tar -C "$EXPORT" -cf - . | as_site tar -xpf - -C "$REL"
+as_site chmod 755 "$REL"
+echo "Building release %[5]s"`, q(dir), q(site.Branch), q(github.CloneURL(site.Repo)), q(rel), id, q(ref),
+		q(repoCachePath(site.Domain)), q(RepoCacheRoot), SiteUser, q(SitesRoot))
+	if err := d.run(ctx, w, fetch, executor.Options{Env: github.GitEnv(token)}); err != nil {
 		if token == "" {
 			fmt.Fprintln(w, "\nHint: private repositories need GitHub connected in Settings → GitHub.")
 		} else {
@@ -444,6 +471,10 @@ for r in $(ls -1 releases | sort -r); do
     # Node apps need node_modules to run after a rollback; others only to build.
     if [ "$STRIP" = true ] && [ -d "$path/node_modules" ]; then rm -rf -- "$path/node_modules"; fi
 done
+
+# The git cache used to live here, readable by the site user; it's in
+# RepoCacheRoot now.
+if [ -d "$SITE/repo/.git" ]; then rm -rf -- "$SITE/repo"; echo "Removed the old git cache"; fi
 
 # Old checkouts from before release-based deploys: retire the one from this
 # move into .legacy-<id>, and delete ones left by earlier deploys.

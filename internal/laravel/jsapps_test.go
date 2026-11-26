@@ -69,7 +69,7 @@ func TestDeployNodeApp(t *testing.T) {
 	}
 	all := strings.Join(rec.scripts, "\n----\n")
 	stdin := strings.Join(rec.stdin, "\n----\n")
-	for _, want := range []string{"skiff-app.example.com-app.service", "ExecStart=/usr/local/lib/skiff/app.example.com-start.sh", "EnvironmentFile=-$SITE/shared/.env", "http://127.0.0.1:4101/", "STRIP=false"} {
+	for _, want := range []string{"skiff-app.example.com-app.service", "ExecStart=/usr/local/bin/skiff env-exec $SITE/shared/.env /usr/local/lib/skiff/app.example.com-start.sh", "http://127.0.0.1:4101/", "STRIP=false"} {
 		if !strings.Contains(all, want) {
 			t.Errorf("node deploy scripts missing %q", want)
 		}

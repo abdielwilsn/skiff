@@ -29,6 +29,10 @@
     });
   });
 
+  // Recovery codes are shown in the response to turning two-factor login on;
+  // point the address bar back at Settings so a reload doesn't resubmit.
+  if (location.pathname === "/settings/2fa/enable") history.replaceState(null, "", "/settings#security");
+
   // Live job log.
   var log = document.getElementById("job-log");
   if (log) {

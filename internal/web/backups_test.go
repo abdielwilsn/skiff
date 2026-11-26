@@ -113,7 +113,7 @@ func TestBackupAllAndPrune(t *testing.T) {
 			t.Errorf("backup = %+v", b)
 		}
 	}
-	if f.ran("mysqldump") != 1 || f.ran("sqlite3 \"$DB\"") != 1 || f.ran("-T \"$FILE\"") != 2 {
+	if f.ran("mysqldump") != 1 || f.ran(`sqlite3 "$1"`) != 1 || f.ran("-T \"$FILE\"") != 2 {
 		t.Error("expected one dump of each database, each uploaded")
 	}
 

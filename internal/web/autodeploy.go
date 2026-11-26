@@ -152,7 +152,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !github.ValidSignature(site.HookSecret, body, r.Header.Get("X-Hub-Signature-256")) {
-		slog.Warn("webhook with a bad signature", "site", site.Domain, "ip", clientIP(r))
+		slog.Warn("webhook with a bad signature", "site", site.Domain, "ip", s.clientIP(r))
 		reply(http.StatusUnauthorized, "bad signature")
 		return
 	}

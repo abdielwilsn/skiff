@@ -382,7 +382,7 @@ if command -v nginx >/dev/null 2>&1; then nginx -t && service nginx reload; fi`,
 		}
 	}
 	step(w, "Removing %s", dir)
-	return d.run(ctx, w, "rm -rf --one-file-system -- "+q(dir), executor.Options{})
+	return d.run(ctx, w, "rm -rf --one-file-system -- "+q(dir)+" "+q(repoCachePath(site.Domain)), executor.Options{})
 }
 
 // ReadEnv returns the site's .env file ("" if it doesn't exist yet).

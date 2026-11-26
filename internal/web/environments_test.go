@@ -185,7 +185,7 @@ func TestPromoteDeploysStagingCommit(t *testing.T) {
 	if len(jobs) != 1 || *jobs[0].SiteID != prod.ID || !strings.Contains(jobs[0].Title, "promote 1f1f1f1 from staging") || jobs[0].Status != store.JobSuccess {
 		t.Fatalf("jobs = %+v", jobs)
 	}
-	if f.ran("REF='"+sha+"'") != 1 || f.ran("SITE='/home/skiff/app.example.com'\nREPO=") != 1 {
+	if f.ran("REF='"+sha+"'") != 1 || f.ran("SITE='/home/skiff/app.example.com'\nCACHE=") != 1 {
 		t.Error("production should be built from staging's commit")
 	}
 }

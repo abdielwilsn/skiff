@@ -21,8 +21,13 @@ curl -fsSL https://raw.githubusercontent.com/abdielwilsn/skiff/main/scripts/inst
 The installer downloads the latest release for your CPU from GitHub, verifies
 its SHA-256 checksum, installs it to `/usr/local/bin/skiff`, creates a `skiff`
 systemd service and prints a one-time setup link
-(`http://SERVER_IP:8090/setup?token=…`). Open it (ideally through an SSH tunnel)
-to create the admin account.
+(`https://SERVER_IP:8090/setup?token=…`). Open it to create the admin account.
+
+Until the panel has its own domain, port 8090 uses a self-signed certificate,
+so the setup token and your password are encrypted from the first visit. Your
+browser warns once; check that the certificate's SHA-256 fingerprint matches
+the one the installer printed (`sudo skiff tls-fingerprint` shows it again).
+To avoid the warning, use an SSH tunnel and http://localhost:8090 instead.
 
 Options: `| sudo bash -s -- --version v0.2.0` installs a specific release, and
 `--port 9000` picks the panel port on a fresh install.
@@ -38,11 +43,12 @@ Then in the panel:
 1. **Provision server**: installs Nginx, PHP 8.4, Composer, Git and creates the
    unprivileged `skiff` user that sites run as.
 2. **Settings → Panel address & HTTPS**: give the panel a domain (e.g.
-   `panel.example.com`) so you stop logging in over plain HTTP. Do this before
-   setting up GitHub, since the OAuth callback URL depends on it.
-3. **Settings → GitHub**: register a GitHub OAuth app (the page shows the exact
+   `panel.example.com`) with a real certificate. Do this before setting up
+   GitHub, since the OAuth callback URL depends on it.
+3. **Settings → Login security**: turn on two-factor login.
+4. **Settings → GitHub**: register a GitHub OAuth app (the page shows the exact
    callback URL), paste the Client ID and secret, then **Connect GitHub**.
-4. **Repositories → Deploy**: pick a branch and a domain (or the server's IP).
+5. **Repositories → Deploy**: pick a branch and a domain (or the server's IP).
 
 ## What a deploy does
 
@@ -53,12 +59,14 @@ Deploys are release-based, so a failed deploy never touches the live site:
   current -> releases/20261122141530   what Nginx serves
   releases/<id>/                        one checkout per deploy (last 5 kept)
   shared/.env  shared/storage/  shared/database/database.sqlite
-  repo/                                 git cache
+/var/lib/skiff/repos/<domain>/          git cache (root only)
 ```
 
-1. Fetches the newest commit of the branch into `repo/` and checks it out into
-   a new `releases/<id>/` (the GitHub token is passed to git through the
-   environment, never written to disk, and isn't visible to your deploy script).
+1. Fetches the newest commit of the branch into the git cache and unpacks it
+   into a new `releases/<id>/`. Git runs as root, with the GitHub token in its
+   environment only, so no site, dependency or deploy script (all running as
+   `skiff`) can read the token. The `skiff` user unpacks the files, so it owns
+   every file in the release.
 2. Links the shared `.env`, `storage/` and SQLite database into the release
    (`.env` is created from `.env.example` on the first deploy).
 3. Runs the site's **deploy script** in the release as the `skiff` user (editable
@@ -362,10 +370,11 @@ points at the server, and port 80 open to the internet.
    from that domain to the panel on `127.0.0.1:<port>`.
 2. Gets a Let's Encrypt certificate for it with certbot, the same way sites do.
    If that fails, the proxy is rolled back so nothing is left exposed.
-3. From then on, plain-HTTP visits to `http://SERVER_IP:8090` get a 307
-   redirect to `https://<domain>`, and session cookies are marked `Secure`.
-   Login rate limiting uses the real client IP from the proxy's `X-Real-IP`
-   (trusted only from localhost).
+3. From then on, visits to `SERVER_IP:8090` get a 307 redirect to
+   `https://<domain>`, and session cookies are marked `Secure`. Login rate
+   limiting uses the real client IP from the proxy's `X-Real-IP`, trusted only
+   on requests that also carry the proxy's secret `X-Skiff-Proxy` header. The
+   proxy config is root-only, so sites on the server can't forge it.
 
 Requests from localhost are never redirected, so an SSH tunnel always works:
 `ssh -L 8090:localhost:8090 root@server`, then open http://localhost:8090.
@@ -445,13 +454,27 @@ scripts/install.sh   systemd installer
 ## Security notes
 
 - The panel runs as root (it manages packages and Nginx); sites run as `skiff`.
+- Code running as `skiff` can't reach root's secrets through Skiff. Git, which
+  holds the GitHub token, runs as root. Each app's `.env` is loaded by
+  `skiff env-exec` as the site user, not by systemd as root. Site files
+  (SQLite databases, `laravel.log`) are read and written as `skiff` during
+  backups, restores and on the Logs page, so a symlink planted there can't
+  make root read or write anything else.
+- All sites share the `skiff` user, so one site can still read another's files
+  and `.env`. Keep sites you don't trust on separate servers.
 - First-run setup requires a token only readable on the server.
-- Sessions are HttpOnly + SameSite cookies, every form carries a CSRF token,
-  logins are rate-limited per IP.
-- **Give the panel an HTTPS domain** (see above) before using it over the
-  internet. Until then, prefer an SSH tunnel. If you run your own reverse
-  proxy instead, pass `--url https://panel.example.com` and Skiff leaves the
+- The panel's port speaks HTTPS from the first start (self-signed until it has
+  a domain). Plain HTTP is only answered for local clients (SSH tunnels,
+  Skiff's own proxy); anything else is redirected to HTTPS. If you run your own
+  reverse proxy, pass `--url https://panel.example.com` and Skiff leaves the
   panel's address to you.
+- **Two-factor login** (Settings → Login security): a 6-digit code from an
+  authenticator app after the password, plus 10 single-use recovery codes.
+  Turning it on logs out every other session. Lost the phone and the codes?
+  `sudo skiff disable-2fa` on the server turns it off.
+- Sessions are HttpOnly + SameSite cookies that end after 12 hours without use
+  (and 30 days after login); Settings can log out every other session. Every
+  form carries a CSRF token, and logins (both steps) are rate-limited per IP.
 - The GitHub token, OAuth secret and off-site storage keys are stored in
   `/var/lib/skiff/skiff.db` (mode 0700 directory, root only).
 - Backups in `/var/backups/skiff` are root-only (directories 0700, files 0600).
@@ -460,4 +483,5 @@ scripts/install.sh   systemd installer
 
 ```bash
 sudo skiff reset-admin   # prints a new /setup?token=… link; no restart needed
+sudo skiff disable-2fa   # lost your authenticator and recovery codes
 ```

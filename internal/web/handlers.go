@@ -968,9 +968,18 @@ type settingsData struct {
 	ViaHTTPS     bool
 	CurrentHost  string
 	PanelFailure *store.Job
+
+	Security securityData
+	Flash    string // shown once, instead of a cookie flash
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess store.Session) {
+	s.renderSettings(w, r, sess, nil)
+}
+
+// renderSettings renders the Settings page; mod adjusts its data (e.g. to show
+// new recovery codes once).
+func (s *Server) renderSettings(w http.ResponseWriter, r *http.Request, sess store.Session, mod func(*settingsData)) {
 	d := settingsData{CallbackURL: s.baseURL(r) + "/github/callback", HomeURL: s.baseURL(r)}
 	d.PanelDomain = s.panelHTTPSDomain()
 	d.PanelPort = s.panelPort()
@@ -994,7 +1003,15 @@ func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request, sess store
 	d.SecretSet = secret != ""
 	d.Login, _ = s.st.Setting(keyGitHubLogin)
 	d.Connected = s.githubToken() != ""
-	s.render(w, r, "settings", http.StatusOK, pageFor(sess, "Settings", "settings", d))
+	s.securityFor(sess, &d.Security)
+	if mod != nil {
+		mod(&d)
+	}
+	p := pageFor(sess, "Settings", "settings", d)
+	if d.Flash != "" {
+		p.Flash = flash{Kind: "ok", Msg: d.Flash}
+	}
+	s.render(w, r, "settings", http.StatusOK, p)
 }
 
 func (s *Server) saveGitHubApp(w http.ResponseWriter, r *http.Request, _ store.Session) {
@@ -1073,7 +1090,7 @@ func (s *Server) enablePanelHTTPS(w http.ResponseWriter, r *http.Request, _ stor
 	port := s.panelPort()
 	id, err := s.runner.Enqueue(nil, "panel-https", "Serve the panel at https://"+domain,
 		func(ctx context.Context, log io.Writer) error {
-			return s.deployer.EnablePanelHTTPS(ctx, log, domain, port, email)
+			return s.deployer.EnablePanelHTTPS(ctx, log, domain, port, email, s.proxySecret)
 		},
 		func(err error) {
 			if err != nil {

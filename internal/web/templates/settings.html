@@ -66,6 +66,71 @@
 {{end}}
 </section>
 
+<section class="section card" id="security">
+  {{$sec := $d.Security}}
+  <div class="card-body stack">
+    <div class="card-title-row">
+      <h2>Login security</h2>
+      {{if $sec.Enabled}}<span class="status tone-ok"><i></i>Two-factor login on</span>{{else}}<span class="status tone-warn"><i></i>Password only</span>{{end}}
+    </div>
+    <p class="muted">This panel can run anything on the server as root, so protect it with a second factor: a 6-digit code from an authenticator app (1Password, Google Authenticator, Authy…). Sessions end after 12 hours without use, and 30 days after login.</p>
+
+    {{with $sec.NewRecovery}}
+    <div class="note recovery">
+      {{template "i-alert"}}
+      <div class="stack">
+        <strong>Save these recovery codes now.</strong>
+        <span>Each works once, in place of a code, if you lose your phone. They won't be shown again.</span>
+        <ul class="recovery-codes">{{range .}}<li><code>{{.}}</code></li>{{end}}</ul>
+      </div>
+    </div>
+    {{end}}
+
+    {{if $sec.Enabled}}
+      <p class="hint">{{$sec.RecoveryLeft}} recovery code(s) left. Lost your phone and the codes? Run <code>sudo skiff disable-2fa</code> on the server.</p>
+    {{else if $sec.Setup}}
+      <div class="totp-setup">
+        {{with $sec.Setup.QR}}<img class="totp-qr" src="{{.}}" alt="QR code for your authenticator app" width="180" height="180">{{end}}
+        <div class="stack">
+          <span>1. Scan the code with your authenticator app, or <a href="{{$sec.Setup.URI}}">open it</a>, or type this key:</span>
+          <code class="totp-key">{{$sec.Setup.Secret}}</code>
+          <form method="post" action="/settings/2fa/enable" class="inline-form">
+            <input type="hidden" name="csrf" value="{{.CSRF}}">
+            <label class="sr-only" for="totp-code">Code from the app</label>
+            <input id="totp-code" name="code" required autocomplete="one-time-code" inputmode="numeric" maxlength="6" placeholder="2. Enter the 6-digit code" spellcheck="false">
+            <button class="btn primary">Turn on</button>
+          </form>
+        </div>
+      </div>
+    {{end}}
+  </div>
+  <div class="card-footer">
+    <span>{{$sec.Sessions}} active session(s), including this one.</span>
+    <div class="actions">
+      <form method="post" action="/settings/sessions/revoke" data-confirm="Log out every other browser? This one stays logged in.">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button class="btn ghost" {{if le $sec.Sessions 1}}disabled{{end}}>Log out other sessions</button>
+      </form>
+      {{if $sec.Enabled}}
+      <details class="disclosure">
+        <summary class="btn">Turn off two-factor</summary>
+        <form method="post" action="/settings/2fa/disable" class="stack small-form">
+          <input type="hidden" name="csrf" value="{{.CSRF}}">
+          <input type="password" name="password" placeholder="Password" required autocomplete="current-password" aria-label="Password">
+          <input name="code" placeholder="Code or recovery code" required autocomplete="one-time-code" aria-label="Code" spellcheck="false">
+          <button class="btn danger small">Turn off</button>
+        </form>
+      </details>
+      {{else if not $sec.Setup}}
+      <form method="post" action="/settings/2fa/start">
+        <input type="hidden" name="csrf" value="{{.CSRF}}">
+        <button class="btn primary">Set up two-factor login</button>
+      </form>
+      {{end}}
+    </div>
+  </div>
+</section>
+
 <section class="section card" id="github">
   <div class="card-body stack">
     <div class="card-title-row">

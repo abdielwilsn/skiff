@@ -97,6 +97,12 @@ main() {
     if [ -n "$old_version" ]; then
         say "Updated Skiff: $old_version -> $new_version"
         echo "Your sites, settings and login are unchanged. Reload the panel in your browser."
+        local ufp
+        ufp="$("$BIN" tls-fingerprint --data "$DATA" 2>/dev/null || true)"
+        if [ -n "$ufp" ]; then
+            echo "If you open the panel by IP address, it now uses https:// with a self-signed"
+            echo "certificate (SHA-256 $ufp)."
+        fi
         exit 0
     fi
 
@@ -105,12 +111,20 @@ main() {
     ip="${ip:-<server-ip>}"
     port="$(grep -oE -- '--addr [^ ]*:[0-9]+' "$UNIT" | grep -oE '[0-9]+$' || echo "$port")"
     say "Skiff $new_version is running."
+    local fp
+    fp="$("$BIN" tls-fingerprint --data "$DATA" 2>/dev/null || true)"
     if [ -f "$DATA/setup-token" ]; then
-        echo "Finish setup at: http://$ip:$port/setup?token=$(cat "$DATA/setup-token")"
-        echo "Safer: ssh -L $port:localhost:$port root@$ip  then open the link with 'localhost' instead of $ip."
+        echo "Finish setup at: https://$ip:$port/setup?token=$(cat "$DATA/setup-token")"
     else
-        echo "Open: http://$ip:$port"
+        echo "Open: https://$ip:$port"
     fi
+    if [ -n "$fp" ]; then
+        echo "The panel uses a self-signed certificate until you give it a domain, so your"
+        echo "browser will warn once. Check that the certificate's SHA-256 fingerprint is:"
+        echo "  $fp"
+    fi
+    echo "Or skip the warning with an SSH tunnel: ssh -L $port:localhost:$port root@$ip"
+    echo "and open http://localhost:$port instead."
     echo "After setup, give the panel a domain under Settings -> Panel address & HTTPS."
     echo "Update later by running this same command again. Logs: journalctl -u skiff -f"
 }

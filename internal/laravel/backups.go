@@ -152,23 +152,29 @@ mysqldump --user=root --single-transaction --quick --routines --triggers --event
 	return d.runSized(ctx, w, script, executor.Options{})
 }
 
-// BackupSQLite copies a SQLite database consistently to file and returns its size.
+// BackupSQLite copies a SQLite database consistently to file and returns its
+// size. The database is read by the site user, which owns it: reading it as
+// root would follow a symlink the site planted to any root-only file (such as
+// Skiff's own database). Root only writes the gzipped stream into the backup.
 func (d *Deployer) BackupSQLite(ctx context.Context, w io.Writer, dbPath, file string) (int64, error) {
 	if !strings.HasPrefix(dbPath, SitesRoot+"/") || strings.Contains(dbPath, "..") || !ValidBackupFile(file) {
 		return 0, fmt.Errorf("invalid backup target")
 	}
 	step(w, "Backing up SQLite database %s", dbPath)
-	script := fmt.Sprintf(backupPrelude, shell.Quote(file), BackupRoot) + fmt.Sprintf(`DB=%s
-[ -s "$DB" ] || { echo "$DB doesn't exist or is empty." >&2; exit 1; }
+	script := fmt.Sprintf(backupPrelude, shell.Quote(file), BackupRoot) + fmt.Sprintf(`DB=%[1]s
 if ! command -v sqlite3 >/dev/null 2>&1; then
     echo "Installing the sqlite3 command-line tool"
     DEBIAN_FRONTEND=noninteractive apt-get install -y -q sqlite3 >/dev/null
 fi
-COPY="$(mktemp "$DIR/.copy.XXXXXX")"
-trap 'rm -f "$TMP" "$COPY"' EXIT
-sqlite3 "$DB" ".timeout 10000" ".backup '$COPY'"
-gzip -6 -c "$COPY" > "$TMP"
-`, shell.Quote(dbPath)) + backupFinish
+runuser -u %[2]s -- env -i PATH=/usr/bin:/bin HOME=%[3]s bash -c '
+set -eo pipefail
+umask 077
+[ -s "$1" ] || { echo "$1 does not exist or is empty." >&2; exit 1; }
+COPY="$(mktemp)"
+trap "rm -f \"\$COPY\"" EXIT
+sqlite3 "$1" ".timeout 10000" ".backup $COPY" >&2
+gzip -6 -c "$COPY"' _ "$DB" > "$TMP"
+`, shell.Quote(dbPath), SiteUser, shell.Quote(SitesRoot)) + backupFinish
 	return d.runSized(ctx, w, script, executor.Options{})
 }
 
@@ -187,7 +193,8 @@ func (d *Deployer) SQLiteDatabases(ctx context.Context, domains []string) (map[s
 		}
 	}
 	var buf bytes.Buffer
-	if err := d.Exec.Run(ctx, b.String(), executor.Options{}, &buf); err != nil {
+	// As the site user: a symlinked database must not be followed as root.
+	if err := d.Exec.Run(ctx, b.String(), executor.Options{User: SiteUser}, &buf); err != nil {
 		return out, err
 	}
 	for _, line := range strings.Split(buf.String(), "\n") {
@@ -294,23 +301,28 @@ echo "Restored $(mysql --user=root -N -e "SELECT COUNT(*) FROM information_schem
 }
 
 // RestoreSQLite replaces a site's SQLite database with a backup (an atomic
-// rename, so the app never sees a half-written file).
+// rename, so the app never sees a half-written file). Root only reads the
+// backup; the site user writes it into place, so nothing is written through a
+// symlink the site controls with root's permissions.
 func (d *Deployer) RestoreSQLite(ctx context.Context, w io.Writer, dbPath, file string) error {
 	if !strings.HasPrefix(dbPath, SitesRoot+"/") || strings.Contains(dbPath, "..") || !ValidBackupFile(file) || !strings.HasSuffix(file, ".sqlite.gz") {
 		return fmt.Errorf("invalid restore")
 	}
 	step(w, "Restoring %s from %s", dbPath, file)
-	script := fmt.Sprintf(`FILE=%s
-DB=%s
+	script := fmt.Sprintf(`set -o pipefail
+FILE=%[1]s
 [ -f "$FILE" ] || { echo "The backup file is missing." >&2; exit 1; }
+gzip -t "$FILE"
+gunzip -c "$FILE" | runuser -u %[3]s -- env -i PATH=/usr/bin:/bin HOME=%[4]s bash -c '
+set -e
+DB="$1"
 mkdir -p "$(dirname "$DB")"
 TMP="$(mktemp "$(dirname "$DB")/.restore.XXXXXX")"
-trap 'rm -f "$TMP"' EXIT
-gunzip -c "$FILE" > "$TMP"
-chown %s:%s "$TMP"
+trap "rm -f \"\$TMP\"" EXIT
+cat > "$TMP"
 chmod 644 "$TMP"
 mv -f "$TMP" "$DB"
 rm -f "$DB-wal" "$DB-shm" "$DB-journal"
-echo "Restored $DB ($(stat -c %%s "$DB") bytes)"`, shell.Quote(file), shell.Quote(dbPath), SiteUser, SiteUser)
+echo "Restored $DB ($(stat -c %%s "$DB") bytes)"' _ %[2]s`, shell.Quote(file), shell.Quote(dbPath), SiteUser, shell.Quote(SitesRoot))
 	return d.run(ctx, w, script, executor.Options{})
 }
