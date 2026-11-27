@@ -41,7 +41,13 @@ func (s *Server) auth(h handler) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodPost {
-			if subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(sess.CSRF)) != 1 {
+			// A header for requests whose body isn't a form (file uploads):
+			// reading the form would read, and buffer, the whole body.
+			token := r.Header.Get("X-CSRF-Token")
+			if token == "" {
+				token = r.FormValue("csrf")
+			}
+			if subtle.ConstantTimeCompare([]byte(token), []byte(sess.CSRF)) != 1 {
 				http.Error(w, "Invalid or missing CSRF token. Reload the page and try again.", http.StatusForbidden)
 				return
 			}

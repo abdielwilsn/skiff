@@ -971,6 +971,7 @@ const (
 	BackupManual    = "manual"
 	BackupDeploy    = "deploy"  // taken right before a deploy
 	BackupRestore   = "restore" // taken right before a restore
+	BackupImport    = "import"  // a file imported from elsewhere
 )
 
 // Backup is one database dump.

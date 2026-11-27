@@ -110,23 +110,31 @@ runuser -u postgres -- pg_dump --no-owner --no-privileges %s | gzip -6 > "$TMP"
 }
 
 // RestorePostgres replaces a PostgreSQL database's contents with a backup.
-// The database is recreated (disconnecting the app) and the dump is loaded as
-// its owner, so the app keeps owning every table.
-func (d *Deployer) RestorePostgres(ctx context.Context, w io.Writer, dbName, owner, file string) error {
-	if !ValidDBName(dbName) || !ValidDBName(owner) || !ValidBackupFile(file) || !strings.HasSuffix(file, ".sql.gz") {
+// The database is recreated (disconnecting the app) and the dump is loaded by
+// nobody, connected over TCP as the database's owner, so the app keeps owning
+// every table and an imported dump can't reach other databases or run
+// anything as the postgres superuser. Extensions the dump uses are created
+// first by the superuser, since an owner can only create "trusted" ones.
+func (d *Deployer) RestorePostgres(ctx context.Context, w io.Writer, dbName, owner, password, file string) error {
+	if !ValidDBName(dbName) || !ValidDBName(owner) || !dbPasswordRe.MatchString(password) || !ValidBackupFile(file) || !strings.HasSuffix(file, ".sql.gz") {
 		return fmt.Errorf("invalid restore")
 	}
 	step(w, "Restoring PostgreSQL database %s from %s", dbName, file)
-	script := fmt.Sprintf(`FILE=%[1]s
+	script := pgCleanFn + fmt.Sprintf(`FILE=%[1]s
+IFS= read -r DBPASS
 [ -f "$FILE" ] || { echo "The backup file is missing." >&2; exit 1; }
 gzip -t "$FILE"
 cd /tmp
-pg() { runuser -u postgres -- psql -v ON_ERROR_STOP=1 -q "$@"; }
+pg() { runuser -u postgres -- psql -X -v ON_ERROR_STOP=1 -q "$@"; }
 pg -d postgres -c 'DROP DATABASE IF EXISTS "%[2]s" WITH (FORCE)'
 pg -d postgres -c "CREATE DATABASE \"%[2]s\" OWNER \"%[3]s\" ENCODING 'UTF8' TEMPLATE template0"
 pg -d postgres -c 'REVOKE ALL ON DATABASE "%[2]s" FROM PUBLIC' -c 'GRANT ALL ON DATABASE "%[2]s" TO "%[3]s"'
-gunzip -c "$FILE" | pg -d %[2]s -c 'SET ROLE "%[3]s"' -f -
-echo "Restored $(runuser -u postgres -- psql -tA -d %[2]s -c "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')") tables"`,
+for ext in $(gunzip -c "$FILE" | pg_extensions); do
+    pg -d %[2]s -c "CREATE EXTENSION IF NOT EXISTS \"$ext\"" || echo "Couldn't create the extension $ext; the import will fail if it needs it."
+done
+gunzip -c "$FILE" | pg_clean | runuser -u nobody -- env -i PATH=/usr/bin:/bin HOME=/nonexistent bash -c \
+    'IFS= read -r PGPASSWORD <&3; export PGPASSWORD; exec psql -X -v ON_ERROR_STOP=1 -q -h 127.0.0.1 -U "$1" -d "$2" -f -' _ %[3]s %[2]s 3<<<"$DBPASS"
+echo "Restored $(runuser -u postgres -- psql -X -tA -d %[2]s -c "SELECT count(*) FROM pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')") tables"`,
 		shell.Quote(file), dbName, owner)
-	return d.run(ctx, w, script, executor.Options{})
+	return d.run(ctx, w, script, executor.Options{Stdin: strings.NewReader(password + "\n")})
 }

@@ -78,6 +78,7 @@
     </td>
     <td>
       {{template "status" .Status}}
+      {{if eq .Status "ready"}}<a class="linklike small" href="/backups/import?source={{.Engine}}:{{.Name}}">Import…</a>{{end}}
       {{if eq .Status "failed"}}
       <form method="post" action="/databases/{{.ID}}/retry" class="inline">
         <input type="hidden" name="csrf" value="{{$csrf}}"><button class="linklike small">Retry</button>

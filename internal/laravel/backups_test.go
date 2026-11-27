@@ -102,10 +102,14 @@ func TestBackupScripts(t *testing.T) {
 func TestRestoreScripts(t *testing.T) {
 	rec := &recorder{}
 	d := &Deployer{Exec: rec}
-	if err := d.RestoreMySQL(context.Background(), &bytes.Buffer{}, "app", "/var/backups/skiff/mysql-app/20261123-030000-manual.sql.gz"); err != nil {
+	if err := d.RestoreMySQL(context.Background(), &bytes.Buffer{}, "app", "app", "Secret123pass", "/var/backups/skiff/mysql-app/20261123-030000-manual.sql.gz"); err != nil {
 		t.Fatal(err)
 	}
-	if s := rec.scripts[0]; !strings.Contains(s, "-e 'DROP DATABASE IF EXISTS `app`; CREATE DATABASE `app`") || !strings.Contains(s, "gunzip -c \"$FILE\" | mysql --user=root app") {
+	// Loaded by nobody as the database's own user, client commands off; the
+	// password only goes over stdin.
+	if s := rec.scripts[0]; !strings.Contains(s, "-e 'DROP DATABASE IF EXISTS `app`; CREATE DATABASE `app`") ||
+		!strings.Contains(s, `gunzip -c "$FILE" | mysql_clean | runuser -u nobody --`) || !strings.Contains(s, "--binary-mode") ||
+		strings.Contains(s, "Secret123pass") || rec.stdin[0] != "app\nSecret123pass\n" {
 		t.Errorf("mysql restore:\n%s", s)
 	}
 	if err := d.RestoreSQLite(context.Background(), &bytes.Buffer{}, "/home/skiff/a.example.com/shared/db.sqlite3", "/var/backups/skiff/sqlite-a/20261123-030000-manual.sqlite.gz"); err != nil {
@@ -114,7 +118,7 @@ func TestRestoreScripts(t *testing.T) {
 	if s := rec.scripts[1]; !strings.Contains(s, `mv -f "$TMP" "$DB"`) || !strings.Contains(s, `rm -f "$DB-wal" "$DB-shm"`) {
 		t.Errorf("sqlite restore:\n%s", s)
 	}
-	if err := d.RestoreMySQL(context.Background(), &bytes.Buffer{}, "app", "/var/backups/skiff/sqlite-a/20261123-030000-manual.sqlite.gz"); err == nil {
+	if err := d.RestoreMySQL(context.Background(), &bytes.Buffer{}, "app", "app", "Secret123pass", "/var/backups/skiff/sqlite-a/20261123-030000-manual.sqlite.gz"); err == nil {
 		t.Error("restoring a SQLite file into MySQL accepted")
 	}
 }

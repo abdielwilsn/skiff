@@ -104,7 +104,8 @@ type backupSource struct {
 	Label      string
 	Kind       string // "mysql", "postgres" or "sqlite"
 	DB         string // MySQL/PostgreSQL database name
-	User       string // PostgreSQL: the database's owner
+	User       string // MySQL/PostgreSQL: the database's user (owner)
+	Password   string // its password, for loading a restore as that user
 	Domain     string // SQLite: the site it belongs to
 	Rel        string // SQLite: path inside the site's shared/
 	SiteID     *int64
@@ -143,7 +144,7 @@ func dbSource(db store.Database) backupSource {
 	if db.IsPostgres() {
 		kind = store.EnginePostgres
 	}
-	return backupSource{ID: kind + ":" + db.Name, Label: db.Name, Kind: kind, DB: db.Name, User: db.Username, SiteID: db.SiteID, SiteDomain: db.SiteDomain}
+	return backupSource{ID: kind + ":" + db.Name, Label: db.Name, Kind: kind, DB: db.Name, User: db.Username, Password: db.Password, SiteID: db.SiteID, SiteDomain: db.SiteDomain}
 }
 
 func sqliteSource(site store.Site, rel string) backupSource {
@@ -248,8 +249,13 @@ func (s *Server) sourceOf(id string) (backupSource, error) {
 // runBackup dumps one database, copies it off-site when storage is set up, and
 // prunes that database's old backups. An off-site failure is reported in the
 // log but doesn't fail the backup: the local copy is fine.
+// backupFile is where a new backup of src goes.
+func backupFile(src backupSource, reason string) string {
+	return fmt.Sprintf("%s/%s/%s-%s.%s.gz", laravel.BackupRoot, src.slug(), time.Now().UTC().Format("20060102-150405"), reason, src.ext())
+}
+
 func (s *Server) runBackup(ctx context.Context, w io.Writer, src backupSource, reason string) error {
-	file := fmt.Sprintf("%s/%s/%s-%s.%s.gz", laravel.BackupRoot, src.slug(), time.Now().UTC().Format("20060102-150405"), reason, src.ext())
+	file := backupFile(src, reason)
 	id, err := s.st.CreateBackup(store.Backup{Source: src.ID, Label: src.Label, SiteID: src.SiteID, Reason: reason, Path: file})
 	if err != nil {
 		return err
@@ -299,7 +305,7 @@ func (s *Server) pruneBackups(ctx context.Context, w io.Writer, source string) {
 			continue
 		}
 		limit, n := keep, &regular
-		if b.Reason == store.BackupDeploy || b.Reason == store.BackupRestore {
+		if b.Reason == store.BackupDeploy || b.Reason == store.BackupRestore || b.Reason == store.BackupImport {
 			limit, n = keepSafetyBackups, &safety
 		}
 		if b.Status == store.BackupOK {
@@ -659,14 +665,17 @@ func (s *Server) restore(ctx context.Context, w io.Writer, src backupSource, b s
 	var err error
 	switch src.Kind {
 	case store.EngineMySQL:
-		err = s.deployer.RestoreMySQL(ctx, w, src.DB, b.Path)
+		err = s.deployer.RestoreMySQL(ctx, w, src.DB, src.User, src.Password, b.Path)
 	case store.EnginePostgres:
-		err = s.deployer.RestorePostgres(ctx, w, src.DB, src.User, b.Path)
+		err = s.deployer.RestorePostgres(ctx, w, src.DB, src.User, src.Password, b.Path)
 	default:
 		path, _ := laravel.SQLitePath(src.Domain, src.Rel)
 		err = s.deployer.RestoreSQLite(ctx, w, path, b.Path)
 	}
 	if err != nil {
+		if src.Kind != "sqlite" {
+			fmt.Fprintln(w, "\nThe database may be partly restored. The safety backup taken above has the data from before: restore it from the Backups page to undo.")
+		}
 		return err
 	}
 	// 4. Long-running processes may hold connections or cached state.

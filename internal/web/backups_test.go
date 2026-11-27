@@ -87,7 +87,7 @@ func laravelSiteWithDatabases(t *testing.T, s *Server) store.Site {
 		t.Fatal(err)
 	}
 	_ = s.st.MarkSiteDeployed(id)
-	if _, err := s.st.CreateDatabase(store.Database{Name: "app_example_com", Username: "app_example_com", Password: "x", Status: store.DBReady, SiteID: &id}); err != nil {
+	if _, err := s.st.CreateDatabase(store.Database{Name: "app_example_com", Username: "app_example_com", Password: "Secret123pass", Status: store.DBReady, SiteID: &id}); err != nil {
 		t.Fatal(err)
 	}
 	site, _ := s.st.Site(id)

@@ -33,6 +33,78 @@
   // point the address bar back at Settings so a reload doesn't resubmit.
   if (location.pathname === "/settings/2fa/enable") history.replaceState(null, "", "/settings#security");
 
+  // Database import: upload the file in pieces (each fits under the panel
+  // proxy's request size limit), then submit the form with the upload's id.
+  var imp = document.getElementById("import-form");
+  if (imp) {
+    var fileInput = imp.querySelector('input[type="file"]');
+    var uploadField = imp.querySelector('input[name="upload"]');
+    var progress = imp.querySelector(".upload-progress");
+    var bar = imp.querySelector(".upload-progress .bar span");
+    var status = imp.querySelector(".upload-status");
+    var errBox = imp.querySelector(".upload-error");
+    var pick = function (v) {
+      var r = imp.querySelector('input[name="from"][value="' + v + '"]');
+      if (r && !r.disabled) r.checked = true;
+    };
+    fileInput.addEventListener("change", function () { pick("upload"); uploadField.value = ""; });
+    var serverSel = imp.querySelector('select[name="file"]');
+    if (serverSel) serverSel.addEventListener("change", function () { pick("server"); });
+    var fmt = function (n) {
+      var u = ["B", "KB", "MB", "GB", "TB"], i = 0;
+      while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+      return (i ? n.toFixed(1) : n) + " " + u[i];
+    };
+    var showErr = function (msg) { errBox.textContent = msg; errBox.hidden = false; };
+    var sleep = function (ms) { return new Promise(function (r) { setTimeout(r, ms); }); };
+    var send = async function (f) {
+      var CHUNK = 3 * 1024 * 1024, id = "", off = 0;
+      progress.hidden = false;
+      while (off < f.size) {
+        var url = "/backups/import/upload?offset=" + off + (id ? "&id=" + id : "&total=" + f.size);
+        var res = null;
+        for (var attempt = 0; attempt < 4 && !res; attempt++) {
+          if (attempt) { status.textContent = "Connection hiccup; retrying…"; await sleep(2000 * attempt); }
+          try {
+            res = await fetch(url, {
+              method: "POST", credentials: "same-origin", body: f.slice(off, off + CHUNK),
+              headers: { "X-CSRF-Token": imp.dataset.csrf, "Content-Type": "application/octet-stream" }
+            });
+          } catch (e) { res = null; }
+        }
+        if (!res) throw new Error("The upload failed: the server can't be reached.");
+        var j = await res.json().catch(function () { return {}; });
+        if (!res.ok || !j.id) throw new Error(j.error || "The upload failed (HTTP " + res.status + "). Reload the page and try again.");
+        id = j.id; off = j.size;
+        bar.style.width = (100 * off / f.size).toFixed(1) + "%";
+        status.textContent = "Uploaded " + fmt(off) + " of " + fmt(f.size);
+      }
+      return id;
+    };
+    imp.addEventListener("submit", function (e) {
+      if (e.defaultPrevented) return;
+      errBox.hidden = true;
+      var from = imp.querySelector('input[name="from"]:checked').value;
+      if (from !== "upload" || uploadField.value) return;
+      e.preventDefault();
+      var f = fileInput.files[0];
+      if (!f) { showErr("Choose a file to upload."); return; }
+      if (f.size === 0) { showErr("That file is empty."); return; }
+      var btn = imp.querySelector("button");
+      btn.disabled = true;
+      send(f).then(function (id) {
+        uploadField.value = id;
+        status.textContent = "Uploaded. Starting the import…";
+        fileInput.disabled = true; // the file is on the server now; don't send it again
+        imp.submit();
+      }).catch(function (err) {
+        btn.disabled = false;
+        progress.hidden = true;
+        showErr(err.message);
+      });
+    });
+  }
+
   // Live job log.
   var log = document.getElementById("job-log");
   if (log) {

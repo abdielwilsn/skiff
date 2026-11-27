@@ -51,14 +51,14 @@ func TestPostgresDatabases(t *testing.T) {
 	if _, err := d.BackupPostgres(ctx, &log, "shop", file); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RestorePostgres(ctx, &log, "shop", "shop", file); err != nil {
+	if err := d.RestorePostgres(ctx, &log, "shop", "shop", "Secret123pass", file); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.DropDatabase(ctx, &log, spec); err != nil {
 		t.Fatal(err)
 	}
 	all := strings.Join(rec.scripts, "\n")
-	for _, want := range []string{"pg_dump --no-owner --no-privileges shop", `WITH (FORCE)`, `CREATE DATABASE \"shop\" OWNER \"shop\"`, `-c 'SET ROLE "shop"' -f -`} {
+	for _, want := range []string{"pg_dump --no-owner --no-privileges shop", `WITH (FORCE)`, `CREATE DATABASE \"shop\" OWNER \"shop\"`, `| pg_clean | runuser -u nobody --`, `-h 127.0.0.1 -U "$1" -d "$2" -f -' _ shop shop`} {
 		if !strings.Contains(all, want) {
 			t.Errorf("scripts never ran %q", want)
 		}
@@ -69,7 +69,7 @@ func TestPostgresDatabases(t *testing.T) {
 	if strings.Contains(all, pw) || strings.Contains(log.String(), pw) {
 		t.Error("the password leaked into a script or the log")
 	}
-	if err := d.RestorePostgres(ctx, &log, "shop", "x'; DROP", file); err == nil {
+	if err := d.RestorePostgres(ctx, &log, "shop", "x'; DROP", "Secret123pass", file); err == nil {
 		t.Error("accepted a bad owner")
 	}
 	for _, bad := range []string{"postgres", "pg_shop", "template1"} {

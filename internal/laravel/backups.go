@@ -285,19 +285,32 @@ func (d *Deployer) RemoveBackupFile(ctx context.Context, w io.Writer, file strin
 
 // RestoreMySQL replaces a MySQL database's contents with a backup. The
 // database is dropped and recreated first, so tables added since the backup
-// don't linger; the user's privileges are kept.
-func (d *Deployer) RestoreMySQL(ctx context.Context, w io.Writer, dbName, file string) error {
-	if !ValidDBName(dbName) || !ValidBackupFile(file) || !strings.HasSuffix(file, ".sql.gz") {
+// don't linger; the user's privileges are kept. The dump is loaded by nobody,
+// connected as the database's own user (credentials over stdin, never on a
+// command line), in --binary-mode so client commands like "\!" are refused:
+// an imported dump can't reach other databases or run anything as root.
+func (d *Deployer) RestoreMySQL(ctx context.Context, w io.Writer, dbName, user, password, file string) error {
+	if !ValidDBName(dbName) || !ValidDBName(user) || !dbPasswordRe.MatchString(password) || !ValidBackupFile(file) || !strings.HasSuffix(file, ".sql.gz") {
 		return fmt.Errorf("invalid restore")
 	}
 	step(w, "Restoring MySQL database %s from %s", dbName, file)
-	script := fmt.Sprintf("FILE=%[1]s\n"+`[ -f "$FILE" ] || { echo "The backup file is missing." >&2; exit 1; }
+	script := mysqlCleanFn + fmt.Sprintf("FILE=%[1]s\n"+`IFS= read -r DBUSER
+IFS= read -r DBPASS
+[ -f "$FILE" ] || { echo "The backup file is missing." >&2; exit 1; }
 gzip -t "$FILE"
+# Lets the database's own user create triggers and stored functions while
+# binary logging is on (it's a single server, so nothing replicates them).
+mysql --user=root -e 'SET PERSIST log_bin_trust_function_creators = 1' 2>/dev/null || true
 # Single quotes: the backticks are SQL identifier quotes, not shell.
 mysql --user=root -e 'DROP DATABASE IF EXISTS `+"`%[2]s`"+`; CREATE DATABASE `+"`%[2]s`"+` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;'
-gunzip -c "$FILE" | mysql --user=root %[2]s
+cd /
+# nobody reads the password from descriptor 3 and hands it to mysql in an
+# option file on a pipe of its own, so it's never in an argument list.
+gunzip -c "$FILE" | mysql_clean | runuser -u nobody -- env -i PATH=/usr/bin:/bin HOME=/nonexistent bash -c \
+    'IFS= read -r PW <&3; exec 3<&-; exec mysql --defaults-file=<(printf "[client]\nuser=%%s\npassword=%%s\n" "$1" "$PW") --protocol=TCP --host=127.0.0.1 --binary-mode --default-character-set=utf8mb4 "$2"' \
+    _ "$DBUSER" %[2]s 3<<<"$DBPASS"
 echo "Restored $(mysql --user=root -N -e "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='%[2]s'") tables"`, shell.Quote(file), dbName)
-	return d.run(ctx, w, script, executor.Options{})
+	return d.run(ctx, w, script, executor.Options{Stdin: strings.NewReader(user + "\n" + password + "\n")})
 }
 
 // RestoreSQLite replaces a site's SQLite database with a backup (an atomic

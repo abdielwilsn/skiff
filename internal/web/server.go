@@ -233,6 +233,9 @@ func (s *Server) routes() {
 	m.HandleFunc("POST /backups/storage", s.auth(s.saveBackupStorage))
 	m.HandleFunc("POST /backups/storage/remove", s.auth(s.removeBackupStorage))
 	m.HandleFunc("POST /backups/{id}/restore", s.auth(s.restoreBackup))
+	m.HandleFunc("GET /backups/import", s.auth(s.importPage))
+	m.HandleFunc("POST /backups/import", s.auth(s.startImport))
+	m.HandleFunc("POST "+uploadRoute, s.auth(s.uploadChunk))
 	m.HandleFunc("POST /backups/{id}/delete", s.auth(s.deleteBackupHandler))
 	m.HandleFunc("GET /backups/{id}/download", s.auth(s.downloadBackup))
 
@@ -273,7 +276,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if r.Method == http.MethodPost {
+	// Forms are small. Upload chunks have their own, larger limit, applied
+	// once the request is known to come from a logged-in admin.
+	if r.Method == http.MethodPost && r.URL.Path != uploadRoute {
 		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 	}
 	s.mux.ServeHTTP(w, r)
@@ -363,6 +368,8 @@ func (s *Server) loadTemplates() error {
 				return "Before deploy"
 			case store.BackupRestore:
 				return "Before restore"
+			case store.BackupImport:
+				return "Imported"
 			}
 			return "Manual"
 		},

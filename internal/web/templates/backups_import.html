@@ -1,0 +1,80 @@
+{{define "content"}}
+{{$d := .Data}}
+{{$csrf := .CSRF}}
+<div class="page-head">
+  <div>
+    <h1>Import a database</h1>
+    <p class="page-sub">Moving from another server? Load a dump into one of this server's databases.</p>
+  </div>
+</div>
+
+{{with $d.SourcesErr}}{{template "flash" (dict "Kind" "err" "Msg" .)}}{{end}}
+
+{{if not $d.Sources}}
+<div class="empty">
+  <span class="callout-icon">{{template "i-db"}}</span>
+  <h2>Create the database first</h2>
+  <p class="muted">Imports go into a database Skiff manages. Create the site (or a database on the <a href="/databases">Databases</a> page), then come back. SQLite files show up once their site has been deployed.</p>
+</div>
+{{else}}
+<form method="post" action="/backups/import" class="card" id="import-form" data-csrf="{{$csrf}}">
+  <input type="hidden" name="csrf" value="{{$csrf}}">
+  <input type="hidden" name="upload" value="">
+  <div class="card-body stack">
+    <label>Into
+      <select name="source" required>
+        {{range $d.Sources}}<option value="{{.ID}}" {{if eq .ID $d.Selected}}selected{{end}}>{{.Label}} · {{.KindLabel}}{{with .SiteDomain}} · {{.}}{{end}}</option>{{end}}
+      </select>
+      <span class="field-hint">Everything in this database is replaced. Skiff takes a safety backup of it first, so you can undo the import from the Backups page.</span>
+    </label>
+
+    <fieldset class="choices">
+      <legend>File</legend>
+      <label class="choice">
+        <input type="radio" name="from" value="upload" checked>
+        <span>
+          <strong>Upload from this computer</strong>
+          <span class="field-hint">Fine for most dumps. Large files upload in pieces, with progress.</span>
+          <input type="file" name="upload_file" aria-label="File to upload">
+        </span>
+      </label>
+      <label class="choice">
+        <input type="radio" name="from" value="server" {{if not $d.Files}}disabled{{end}}>
+        <span>
+          <strong>A file already on the server</strong>
+          <span class="field-hint">Best for big dumps. Copy it to <code>{{$d.Dir}}</code>, then reload this page:</span>
+          <code class="cmd">scp backup.sql.gz root@{{$d.Host}}:{{$d.Dir}}/</code>
+          {{if $d.Files}}
+          <select name="file" aria-label="File on the server">
+            {{range $d.Files}}<option value="{{.Name}}">{{.Name}} · {{bytes .Size}} · {{ago .Modified}}</option>{{end}}
+          </select>
+          {{else}}
+          <span class="field-hint">No files there yet.</span>
+          {{end}}
+        </span>
+      </label>
+    </fieldset>
+
+    <div class="note">{{template "i-db"}}<span>
+      Works with <code>.sql</code> dumps from mysqldump, MariaDB, pg_dump, phpMyAdmin, TablePlus and the like; PostgreSQL archives (<code>pg_dump -Fc</code>); and SQLite files. Each can be gzipped (<code>.gz</code>) or in a <code>.zip</code> with a single database file inside, such as a Laravel backup.
+      The dump is loaded as the database's own user, so statements for other databases or users are skipped.
+    </span></div>
+
+    <label class="check">
+      <input type="checkbox" name="confirm" value="1" required>
+      <span>Replace the database's current data with this file</span>
+    </label>
+
+    <div class="upload-progress" hidden>
+      <div class="bar"><span></span></div>
+      <span class="hint upload-status"></span>
+    </div>
+    <p class="err-text upload-error" hidden></p>
+
+    <div class="actions">
+      <button class="btn primary" {{if $d.Busy}}disabled title="A backup or restore is running"{{end}}>{{template "i-upload"}} Import</button>
+    </div>
+  </div>
+</form>
+{{end}}
+{{end}}

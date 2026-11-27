@@ -7,6 +7,7 @@
     <p class="page-sub">Your databases, dumped {{if $d.Settings.Enabled}}every night at {{$d.Settings.Time}}{{else}}on demand{{end}}{{if $d.Settings.BeforeDeploy}} and before every deploy{{end}}.</p>
   </div>
   <div class="actions">
+    <a class="btn" href="/backups/import">{{template "i-upload"}} Import</a>
     <form method="post" action="/backups/run">
       <input type="hidden" name="csrf" value="{{$csrf}}">
       <button class="btn primary" {{if or $d.Busy (not $d.Sources)}}disabled{{end}} {{if $d.Busy}}title="A backup is already running"{{end}}>{{template "i-archive"}} Back up now</button>
@@ -42,6 +43,7 @@
           </div>
         </div>
         <div class="list-side">
+          <a class="btn small ghost" href="/backups/import?source={{.ID}}">Import</a>
           <form method="post" action="/backups/run">
             <input type="hidden" name="csrf" value="{{$csrf}}">
             <input type="hidden" name="source" value="{{.ID}}">

@@ -10,6 +10,8 @@ clones it, installs dependencies, and serves it with Nginx + PHP-FPM.
 - Built for the smallest servers: PHP-FPM uses `ondemand` workers, jobs run one
   at a time, and provisioning adds swap on machines with < 2 GB RAM.
 
+**Documentation: [skiff-website-blush.vercel.app/docs](https://skiff-website-blush.vercel.app/docs)**
+
 ## Install on a server
 
 Requirements: Ubuntu 22.04 or 24.04 (x86-64 or ARM), root access.
@@ -338,6 +340,39 @@ bad migration can be undone:
 
 If a backup before a deploy fails, the deploy stops (nothing changes); turn off
 "Back up before each deploy" to deploy anyway.
+
+## Importing a database
+
+**Backups → Import** (or **Import…** next to a database on the Databases page)
+loads a dump from another server into one of Skiff's databases, replacing its
+contents:
+
+- **Files**: `.sql` dumps (mysqldump, MariaDB, pg_dump, phpMyAdmin, TablePlus…),
+  PostgreSQL archives (`pg_dump -Fc`/`-Ft`, converted with `pg_restore
+  --no-owner --no-privileges`) and SQLite files, each optionally gzipped or in a
+  `.zip` holding exactly one database file (a spatie/laravel-backup archive, for
+  example). The format is detected from the contents, and a file that doesn't
+  match the database is refused before anything changes.
+- **Upload in the browser**: sent in 3 MiB chunks (under the panel proxy's
+  request limit) to `/var/backups/skiff/imports/` (root only), with progress;
+  refused up front if the disk can't hold it. Deleted after the import.
+- **Or copy it to the server**: `scp dump.sql.gz root@server:/var/backups/skiff/imports/`,
+  then pick it on the import page. Those files are left in place.
+- The file becomes an **Imported** backup of the database, then is restored like
+  any backup: safety backup first, drop and recreate, load, restart the site's
+  processes.
+
+Dumps from other servers load as they are: MySQL `CREATE DATABASE`/`USE`,
+`DEFINER=` clauses, GTID and binary-log statements, and MariaDB's sandbox line
+are skipped; PostgreSQL `OWNER TO`, `GRANT`/`REVOKE`, `CREATE DATABASE` and
+`\connect` are skipped, and extensions the dump uses are created first by the
+superuser. Data rows are never changed.
+
+Every restore and import loads the SQL as `nobody`, connected over TCP as the
+target database's **own user** (credentials passed on a file descriptor, never
+on a command line), with MySQL in `--binary-mode` so client commands like `\!`
+are refused. A dump can't touch other databases or run anything as root or as
+the database superuser.
 
 ## Server health
 
